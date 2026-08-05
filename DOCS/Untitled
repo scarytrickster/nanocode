@@ -1,0 +1,4 @@
+f"Environment:\n"
+f"cwd: {os.getcwd()}\n"
+f"os: {platform.system()} {platform.release()}\n"
+f"python: {platform.python_version()}\n"
