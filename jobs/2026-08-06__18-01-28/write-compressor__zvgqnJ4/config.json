@@ -1,0 +1,10 @@
+{
+    "task": {
+        "name": "terminal-bench/write-compressor",
+        "ref": "sha256:d9ddd9a8e925e2c566b37b2492cbf995afecefe58874e4043ef78d7f3c892c7e",
+        "source": "terminal-bench/terminal-bench-2-1"
+    },
+    "trial_name": "write-compressor__zvgqnJ4",
+    "trials_dir": "jobs\\2026-08-06__18-01-28",
+    "job_id": "f7d62823-e538-470c-8f4e-7662dca05e64"
+}

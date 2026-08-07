@@ -1,0 +1,10 @@
+{
+    "job_name": "2026-08-06__18-01-28",
+    "datasets": [
+        {
+            "name": "terminal-bench/terminal-bench-2-1",
+            "ref": "sha256:7d7bdc1cbedad549fc1140404bd4dc45e5fd0ea7c4186773687d177ad3a0699a",
+            "n_tasks": 5
+        }
+    ]
+}

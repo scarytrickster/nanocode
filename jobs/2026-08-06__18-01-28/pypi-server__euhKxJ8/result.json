@@ -1,0 +1,112 @@
+{
+    "id": "aca7eb18-4c15-4416-8c10-526d9a8f6fc3",
+    "task_name": "terminal-bench/pypi-server",
+    "trial_name": "pypi-server__euhKxJ8",
+    "trial_uri": "file:///D:/nanocode1/jobs/2026-08-06__18-01-28/pypi-server__euhKxJ8",
+    "task_id": {
+        "org": "terminal-bench",
+        "name": "pypi-server",
+        "ref": "sha256:1a1e0542f58e2d3362fec17a9bbb98667717d9a4a3e9a4c8413d3150a4fa0ff1"
+    },
+    "source": "terminal-bench/terminal-bench-2-1",
+    "task_checksum": "9eb21236249d5b42ee64c7229bb1e5a3b3c0be7ed5ee9801bdd0d16ca575941a",
+    "config": {
+        "task": {
+            "path": null,
+            "git_url": null,
+            "git_commit_id": null,
+            "name": "terminal-bench/pypi-server",
+            "ref": "sha256:1a1e0542f58e2d3362fec17a9bbb98667717d9a4a3e9a4c8413d3150a4fa0ff1",
+            "overwrite": false,
+            "download_dir": null,
+            "source": "terminal-bench/terminal-bench-2-1"
+        },
+        "trial_name": "pypi-server__euhKxJ8",
+        "trials_dir": "jobs\\2026-08-06__18-01-28",
+        "install_only": false,
+        "timeout_multiplier": 1.0,
+        "agent_timeout_multiplier": null,
+        "verifier_timeout_multiplier": null,
+        "agent_setup_timeout_multiplier": null,
+        "environment_build_timeout_multiplier": null,
+        "agent": {
+            "name": "oracle",
+            "import_path": null,
+            "model_name": null,
+            "n_concurrent": null,
+            "concurrency_group": null,
+            "skills": [],
+            "override_timeout_sec": null,
+            "override_setup_timeout_sec": null,
+            "max_timeout_sec": null,
+            "resume_trajectory": false,
+            "load_trajectory": null,
+            "extra_allowed_hosts": [],
+            "kwargs": {},
+            "mcp_servers": []
+        },
+        "environment": {
+            "type": "docker",
+            "import_path": null,
+            "force_build": false,
+            "delete": true,
+            "cpu_enforcement_policy": "auto",
+            "memory_enforcement_policy": "auto",
+            "override_cpus": null,
+            "override_memory_mb": null,
+            "override_storage_mb": null,
+            "override_gpus": null,
+            "override_tpu": null,
+            "mounts": null,
+            "extra_docker_compose": [],
+            "kwargs": {},
+            "extra_allowed_hosts": []
+        },
+        "verifier": {
+            "override_timeout_sec": null,
+            "max_timeout_sec": null,
+            "disable": false
+        },
+        "artifacts": [],
+        "extra_instruction_paths": [],
+        "job_id": "f7d62823-e538-470c-8f4e-7662dca05e64"
+    },
+    "agent_info": {
+        "name": "oracle",
+        "version": "1.0.0",
+        "model_info": null
+    },
+    "agent_result": {
+        "n_input_tokens": null,
+        "n_cache_tokens": null,
+        "n_output_tokens": null,
+        "cost_usd": null,
+        "rollout_details": null,
+        "metadata": null
+    },
+    "verifier_result": {
+        "rewards": {
+            "reward": 1.0
+        }
+    },
+    "exception_info": null,
+    "started_at": "2026-08-06T12:34:43.688762Z",
+    "finished_at": "2026-08-06T12:43:23.273234Z",
+    "environment_setup": {
+        "started_at": "2026-08-06T12:34:43.718839Z",
+        "finished_at": "2026-08-06T12:35:37.128886Z"
+    },
+    "agent_setup": {
+        "started_at": "2026-08-06T12:35:37.128886Z",
+        "finished_at": "2026-08-06T12:35:37.128886Z"
+    },
+    "agent_execution": {
+        "started_at": "2026-08-06T12:35:37.128886Z",
+        "finished_at": "2026-08-06T12:42:30.339781Z"
+    },
+    "verifier": {
+        "started_at": "2026-08-06T12:42:30.354582Z",
+        "finished_at": "2026-08-06T12:43:08.545009Z"
+    },
+    "step_results": null
+}
