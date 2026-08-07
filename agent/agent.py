@@ -7,7 +7,7 @@ from models.config import AgentConfig
 from tools import get_all_tools
 from tools.base import Tool
 
-from agent.executor import execute_tool_calls, parse_tool_calls
+from agent.executor import Executor
 from agent.state import get_system_prompt
 
 
@@ -28,62 +28,6 @@ class AgentState:
     def __post_init__(self) -> None:
         self.tools_by_name = {tool.name: tool for tool in self.tools}
         self.tool_schemas = [tool.to_schema() for tool in self.tools]
-
-
-class Executor:
-    """Runs the LLM and tool loop for an AgentState."""
-
-    def run(self, state: AgentState) -> AgentState:
-        """Run until the model produces a final response or iterations are exhausted."""
-        reply = ""
-
-        while state.iteration < state.config.max_iterations:
-            state.iteration += 1
-
-            try:
-                stream = client.chat.completions.create(
-                    model=MODEL,
-                    messages=state.messages,
-                    tools=state.tool_schemas,
-                    stream=True,
-                )
-            except Exception as e:
-                print(f"\nError calling API: {e}", file=sys.stderr)
-                state.status = "error"
-                state.final_response = f"Error: {e}"
-                return state
-
-            reply, tool_calls, finish_reason = parse_tool_calls(stream)
-
-            if finish_reason == "tool_calls" and tool_calls:
-                state.messages.append({
-                    "role": "assistant",
-                    "content": reply,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {"name": tc.name, "arguments": tc.arguments},
-                        }
-                        for tc in tool_calls
-                    ],
-                })
-                execute_tool_calls(
-                    tool_calls,
-                    state.messages,
-                    state.tools_by_name,
-                    state.config,
-                )
-                continue
-
-            state.messages.append({"role": "assistant", "content": reply})
-            state.status = "complete"
-            state.final_response = reply
-            return state
-
-        state.status = "max_iterations"
-        state.final_response = reply
-        return state
 
 
 class NanoCodeAgent:
@@ -118,7 +62,7 @@ class NanoCodeAgent:
     def run(self, task: str) -> str:
         """Run a task and return the final response."""
         state = self.create_state(task)
-        state = self.executor.run(state)
+        self.executor.run(state)
         return state.final_response
 
 
@@ -137,8 +81,9 @@ def run_agent(
         tools=tools,
         config=config,
     )
-    return Executor().run(state).final_response
-
+    executor = Executor()
+    executor.run(state)
+    return state.final_response
 
 def print_banner() -> None:
     """Print the application banner."""

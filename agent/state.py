@@ -1,22 +1,15 @@
-"""
-agent/state.py
-
-Defines the runtime state for a single NanoCode agent execution.
-Every module (planner, executor, reflection, memory, etc.) will
-read from and write to this object.
-"""
-
+import os
+import platform
+import sys
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
-
+from enum import Enum
 from models.config import AgentConfig
 from tools.base import Tool
 
 
 class AgentStatus(str, Enum):
-    """Current execution status of the agent."""
-
+    """Possible statuses for an agent run."""
     IDLE = "idle"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -25,65 +18,34 @@ class AgentStatus(str, Enum):
 
 @dataclass
 class AgentState:
-    """
-    Represents the complete runtime state of one execution.
-
-    This object is shared across every module in the agent.
-    It intentionally contains only runtime data—not business logic.
-    """
-
-    # ------------------------------------------------------------------
-    # Task Information
-    # ------------------------------------------------------------------
+    """Single source of truth for one NanoCode agent execution."""
 
     task: str = ""
-
-    # ------------------------------------------------------------------
-    # Conversation
-    # ------------------------------------------------------------------
-
     messages: list[dict[str, Any]] = field(default_factory=list)
-
-    # ------------------------------------------------------------------
-    # Available Tools
-    # ------------------------------------------------------------------
-
     tools: list[Tool] = field(default_factory=list)
-
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
-
     config: AgentConfig = field(default_factory=AgentConfig)
-
-    # ------------------------------------------------------------------
-    # Runtime Information
-    # ------------------------------------------------------------------
-
     iteration: int = 0
-
-    status: AgentStatus = AgentStatus.IDLE
-
+    status: str = "running"
     final_response: str = ""
 
-    error: str | None = None
 
-    @property
-    def is_finished(self) -> bool:
-        """
-        Returns True if execution has completed.
-        """
-        return self.status in (
-            AgentStatus.COMPLETED,
-            AgentStatus.FAILED,
-        )
+def get_system_prompt() -> str:
+    """Generate the system prompt with environment info."""
+    prompt = (
+        "You are nanocode, a terminal coding agent. Be concise. Prefer tools over guessing.\n"
+        "Use the todo_write tool to plan any task with more than a couple of steps.\n\n"
+        f"Environment:\n"
+        f"cwd: {os.getcwd()}\n"
+        f"os: {platform.system()} {platform.release()}\n"
+        f"python: {sys.version}\n"
+        f"files in cwd: {', '.join(sorted(os.listdir()))}"
+    )
 
-    def reset(self) -> None:
-        """
-        Reset the runtime state so it can be reused.
-        """
-        self.messages.clear()
-        self.iteration = 0
-        self.status = AgentStatus.IDLE
-        self.final_response = ""
-        self.error = None
+    if os.path.exists("NANOCODE.md"):
+        try:
+            with open("NANOCODE.md", encoding="utf-8") as f:
+                prompt += f"\n\nProject instructions:\n{f.read()}"
+        except Exception:
+            pass
+
+    return prompt
