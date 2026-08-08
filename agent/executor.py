@@ -20,6 +20,8 @@ import json
 from pyexpat.errors import messages
 from typing import Any
 
+from httpcore import stream
+
 from agent import state
 from config.settings import MODEL, client
 from models.config import ToolCall
@@ -40,132 +42,113 @@ class Executor:
     # Public API
     # ---------------------------------------------------------
 
-   
 
-    def run(self, state: AgentState) -> None:
+    def run(self, state: AgentState) -> str:
         """
         Execute the agent until it produces a final answer.
         """
-
-        self.tracer.record(
-            "executor.started",
-            task=state.task,
-        )
         state.status = AgentStatus.RUNNING
 
-        tools_by_name = {
-            tool.name: tool
-            for tool in state.tools
-        }
+        with self.tracer.span(
+            "executor",
+            component="agent",
+            task=state.task,
+        ):
+            tools_by_name = {
+                tool.name: tool
+                for tool in state.tools
+            }
 
-        tool_schemas = [
-            tool.to_schema()
-            for tool in state.tools
-        ]
+            tool_schemas = [
+                tool.to_schema()
+                for tool in state.tools
+            ]
 
-        reply = ""
+            reply = ""
 
-        while state.iteration < state.config.max_iterations:
+            while state.iteration < state.config.max_iterations:
+                state.iteration += 1
 
-            state.iteration += 1
+                execution_messages = self._build_messages(state)
 
-            execution_messages = self._build_messages(state)
-
-            self.tracer.record(
-                "llm.request",
-                iteration=state.iteration,
-            )
-            stream = self.client.chat.completions.create(
-                model=MODEL,
-                messages=state.messages,
-                tools=tool_schemas,
-                stream=True,
-            )
-
-            reply, tool_calls, finish_reason = self._parse_stream(stream)
-
-            self.tracer.record(
-                "llm.response",
-                iteration=state.iteration,
-                finish_reason=finish_reason,
-                tool_calls=len(tool_calls),
-    )
-
-            # -------------------------------------------------
-            # Tool Calls
-            # -------------------------------------------------
-
-            if finish_reason == "tool_calls" and tool_calls:
-
-                assistant_message = {
-                    "role": "assistant",
-                    "content": reply,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": tc.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                }
-
-                state.messages.append(assistant_message)
-
-                for tool_call in tool_calls:
-
-                    self.tracer.record(
-                        "tool.started",
-                        tool=tool_call.name,
+                with self.tracer.span(
+                    "llm",
+                    component="executor",
+                    iteration=state.iteration,
+                ):
+                    stream = self.client.chat.completions.create(
+                        model=MODEL,
+                        messages=execution_messages,
+                        tools=tool_schemas,
+                        stream=True,
                     )
 
-                    result = self._execute_tool(
-                        tool_call,
-                        tools_by_name,
+                    reply, tool_calls, finish_reason = (
+                        self._parse_stream(stream)
                     )
 
-                    self.tracer.record(
-                        "tool.completed",
-                        tool=tool_call.name,
-                    )
+                self.tracer.record(
+                    "llm.response",
+                    component="executor",
+                    iteration=state.iteration,
+                    finish_reason=finish_reason,
+                    tool_calls=len(tool_calls),
+                )
 
-                    state.messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": result,
-                        }
-                    )
+                if finish_reason == "tool_calls" and tool_calls:
+                    assistant_message = {
+                        "role": "assistant",
+                        "content": reply,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": tc.arguments,
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    }
 
-                continue
+                    state.messages.append(assistant_message)
 
-            # -------------------------------------------------
-            # Final Response
-            # -------------------------------------------------
+                    for tool_call in tool_calls:
+                        with self.tracer.span(
+                            "tool",
+                            component="executor",
+                            tool=tool_call.name,
+                        ):
+                            result = self._execute_tool(
+                                tool_call,
+                                tools_by_name,
+                            )
 
-            state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": reply,
-                }
-            )
+                        state.messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": result,
+                            }
+                        )
 
-            state.final_response = reply
-            state.status = AgentStatus.COMPLETED
+                    continue
 
-            self.tracer.record(
-                "executor.completed",
-                iterations=state.iteration,
-                 status=state.status.value,
-            )
+                state.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": reply,
+                    }
+                )
 
-            return 
+                state.final_response = reply
+                state.status = AgentStatus.COMPLETED
 
-        state.status = AgentStatus.FAILED
-        return 
+                return reply
+
+            state.status = AgentStatus.FAILED
+            return reply
 
 
     def _build_messages(
@@ -180,10 +163,6 @@ class Executor:
                 f"{i}. {step}"
                 for i, step in enumerate(state.plan, start=1)
             )
-
-            print("\n[TRACE] Planner output:")
-            print(plan_text)
-            print()
 
             plan_message = {
                 "role": "system",

@@ -2,6 +2,6 @@ from agent.agent import NanoCodeAgent
 
 agent = NanoCodeAgent()
 
-response = agent.run("can i know which model is being used for this agent?")
+response = agent.run("Which python version is used in this environment?")
 
 print(response)

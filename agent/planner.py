@@ -16,8 +16,10 @@ The Planner does NOT:
 """
 
 from __future__ import annotations
+from pyexpat.errors import messages
 
 from agent import tracer
+from agent import state
 from config.settings import MODEL, client
 from agent.state import AgentState
 from agent.tracer import Tracer
@@ -56,18 +58,10 @@ class Planner:
 
     def __init__(self, tracer: Tracer | None = None):
         self.client = client
-        self.tracer = tracer or Tracer()
+        self.tracer = Tracer()
 
     def run(self, state: AgentState) -> None:
-        """
-        Generate a plan and store it in state.plan.
-        """
-
-        self.tracer.record(
-            "planner.started",
-            task=state.task,
-        )
-
+        """Generate a plan and store it in state.plan."""
 
         messages = [
             {
@@ -80,20 +74,20 @@ class Planner:
             },
         ]
 
-        response = self.client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            stream=False,
-        )
+        with self.tracer.span(
+            "planner",
+            component="planner",
+            task=state.task,
+        ):
+            response = self.client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                stream=False,
+            )
 
-        plan_text = response.choices[0].message.content or ""
+            plan_text = response.choices[0].message.content or ""
 
-        state.plan = self._parse_plan(plan_text)
-
-        self.tracer.record(
-            "planner.completed",
-            steps=len(state.plan),
-        )
+            state.plan = self._parse_plan(plan_text)
 
     def _parse_plan(self, plan_text: str) -> list[str]:
         """
