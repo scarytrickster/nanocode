@@ -13,6 +13,7 @@ from tools.base import Tool
 from agent.executor import Executor
 from agent.state import get_system_prompt
 from agent.planner import Planner
+from agent.evaluator import Evaluator
 
 
 @dataclass
@@ -35,7 +36,7 @@ class AgentState:
 
 
 class NanoCodeAgent:
-    """High-level agent facade following create_state -> executor -> response."""
+    """High-level agent facade following create_state -> executor -> evaluator -> response."""
 
     def __init__(
         self,
@@ -51,14 +52,20 @@ class NanoCodeAgent:
         # One shared tracer for the entire agent
         self.tracer = Tracer()
 
-        # Planner and Executor share the same tracer
+        # Executor shares the tracer
         self.executor = (
             executor
             if executor is not None
             else Executor(tracer=self.tracer)
         )
-    
+
+        # Planner shares the tracer
         self.planner = Planner(
+            tracer=self.tracer
+        )
+
+        # Evaluator shares the tracer
+        self.evaluator = Evaluator(
             tracer=self.tracer
         )
 
@@ -72,9 +79,17 @@ class NanoCodeAgent:
                 }
             ]
         )
+
     def create_state(self, task: str) -> AgentState:
         """Create an AgentState for a user task."""
-        self.messages.append({"role": "user", "content": task})
+
+        self.messages.append(
+            {
+                "role": "user",
+                "content": task,
+            }
+        )
+
         return AgentState(
             task=task,
             messages=self.messages,
@@ -83,12 +98,17 @@ class NanoCodeAgent:
         )
 
     def run(self, task: str) -> str:
-        """Run a task and return the final response."""
-        state = self.create_state(task)
-        self.planner.run(state)
-        self.executor.run(state)
-        return state.final_response
+        """Run a task, evaluate the result, and return the final response."""
 
+        state = self.create_state(task)
+
+        self.planner.run(state)
+
+        self.executor.run(state)
+
+        evaluation = self.evaluator.evaluate(state)
+
+        return state.final_response
 
 def run_agent(
     messages: list[dict[str, Any]],
