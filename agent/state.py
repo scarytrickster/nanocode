@@ -25,8 +25,9 @@ class AgentState:
     tools: list[Tool] = field(default_factory=list)
     config: AgentConfig = field(default_factory=AgentConfig)
     iteration: int = 0
-    status: str = "running"
+    status: AgentStatus = AgentStatus.RUNNING
     final_response: str = ""
+    plan: list[str] = field(default_factory=list)
 
 
 def get_system_prompt() -> str:

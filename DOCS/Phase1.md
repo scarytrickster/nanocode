@@ -163,3 +163,31 @@ The `/plan` command toggles plan mode. In plan mode, write tools are blocked by 
 It creates an `AgentState` directly and passes it to `Executor.run(state)`.
 
 This keeps existing imports working while the newer flow uses `NanoCodeAgent`.
+
+Phase 1 :
+
+User
+│
+▼
+NanoCodeAgent.run(task)
+│
+▼
+create_state(task)
+│
+▼
+AgentState
+│
+▼
+Executor.run(state)
+│
+├── Call LLM
+├── Parse Tool Calls
+├── Execute Tools
+├── Update Messages
+└── Repeat
+│
+▼
+state.final_response
+│
+▼
+Return Response

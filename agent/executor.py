@@ -17,11 +17,14 @@ It DOES NOT:
 from __future__ import annotations
 
 import json
+from pyexpat.errors import messages
 from typing import Any
 
+from agent import state
 from config.settings import MODEL, client
 from models.config import ToolCall
 from agent.state import AgentState,AgentStatus
+from agent.tracer import Tracer
 
 
 class Executor:
@@ -29,18 +32,25 @@ class Executor:
     Executes one complete agent task.
     """
 
-    def __init__(self):
+    def __init__(self, tracer: Tracer | None = None):
         self.client = client
+        self.tracer = tracer or Tracer()
 
     # ---------------------------------------------------------
     # Public API
     # ---------------------------------------------------------
+
+   
 
     def run(self, state: AgentState) -> None:
         """
         Execute the agent until it produces a final answer.
         """
 
+        self.tracer.record(
+            "executor.started",
+            task=state.task,
+        )
         state.status = AgentStatus.RUNNING
 
         tools_by_name = {
@@ -59,6 +69,12 @@ class Executor:
 
             state.iteration += 1
 
+            execution_messages = self._build_messages(state)
+
+            self.tracer.record(
+                "llm.request",
+                iteration=state.iteration,
+            )
             stream = self.client.chat.completions.create(
                 model=MODEL,
                 messages=state.messages,
@@ -67,6 +83,13 @@ class Executor:
             )
 
             reply, tool_calls, finish_reason = self._parse_stream(stream)
+
+            self.tracer.record(
+                "llm.response",
+                iteration=state.iteration,
+                finish_reason=finish_reason,
+                tool_calls=len(tool_calls),
+    )
 
             # -------------------------------------------------
             # Tool Calls
@@ -94,9 +117,19 @@ class Executor:
 
                 for tool_call in tool_calls:
 
+                    self.tracer.record(
+                        "tool.started",
+                        tool=tool_call.name,
+                    )
+
                     result = self._execute_tool(
                         tool_call,
                         tools_by_name,
+                    )
+
+                    self.tracer.record(
+                        "tool.completed",
+                        tool=tool_call.name,
                     )
 
                     state.messages.append(
@@ -123,11 +156,51 @@ class Executor:
             state.final_response = reply
             state.status = AgentStatus.COMPLETED
 
+            self.tracer.record(
+                "executor.completed",
+                iterations=state.iteration,
+                 status=state.status.value,
+            )
+
             return 
 
         state.status = AgentStatus.FAILED
         return 
 
+
+    def _build_messages(
+        self,
+        state: AgentState,
+    ) -> list[dict[str, Any]]:
+
+        messages = list(state.messages)
+
+        if state.plan:
+            plan_text = "\n".join(
+                f"{i}. {step}"
+                for i, step in enumerate(state.plan, start=1)
+            )
+
+            print("\n[TRACE] Planner output:")
+            print(plan_text)
+            print()
+
+            plan_message = {
+                "role": "system",
+                "content": (
+                    "Execution plan for the current task:\n\n"
+                    f"{plan_text}\n\n"
+                    "Use this plan to guide your execution. "
+                    "Adapt the plan when necessary based on tool results."
+                ),
+            }
+
+            messages.insert(1, plan_message)
+
+        return messages
+
+   
+    
     # ---------------------------------------------------------
     # Stream Parsing
     # ---------------------------------------------------------

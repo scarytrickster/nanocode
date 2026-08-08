@@ -1,7 +1,10 @@
+from pyexpat.errors import messages
 import sys
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent import state
+from agent.tracer import Tracer
 from config.settings import MODEL, client
 from models.config import AgentConfig
 from tools import get_all_tools
@@ -9,6 +12,7 @@ from tools.base import Tool
 
 from agent.executor import Executor
 from agent.state import get_system_prompt
+from agent.planner import Planner
 
 
 @dataclass
@@ -40,15 +44,34 @@ class NanoCodeAgent:
         executor: Executor | None = None,
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
+
         self.tools = tools if tools is not None else get_all_tools()
         self.config = config if config is not None else AgentConfig()
-        self.executor = executor if executor is not None else Executor()
+
+        # One shared tracer for the entire agent
+        self.tracer = Tracer()
+
+        # Planner and Executor share the same tracer
+        self.executor = (
+            executor
+            if executor is not None
+            else Executor(tracer=self.tracer)
+        )
+    
+        self.planner = Planner(
+            tracer=self.tracer
+        )
+
         self.messages = (
             messages
             if messages is not None
-            else [{"role": "system", "content": get_system_prompt()}]
+            else [
+                {
+                    "role": "system",
+                    "content": get_system_prompt(),
+                }
+            ]
         )
-
     def create_state(self, task: str) -> AgentState:
         """Create an AgentState for a user task."""
         self.messages.append({"role": "user", "content": task})
@@ -62,6 +85,7 @@ class NanoCodeAgent:
     def run(self, task: str) -> str:
         """Run a task and return the final response."""
         state = self.create_state(task)
+        self.planner.run(state)
         self.executor.run(state)
         return state.final_response
 
