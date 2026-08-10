@@ -23,6 +23,7 @@ from agent import state
 from config.settings import MODEL, client
 from agent.state import AgentState
 from agent.tracer import Tracer
+from agent.memory import Experience
 
 
 PLANNER_SYSTEM_PROMPT = """
@@ -58,10 +59,21 @@ class Planner:
 
     def __init__(self, tracer: Tracer | None = None):
         self.client = client
-        self.tracer = Tracer()
+        self.tracer = tracer or Tracer()
 
-    def run(self, state: AgentState) -> None:
-        """Generate a plan and store it in state.plan."""
+    def run(
+        self,
+        state: AgentState,
+        experiences: list[Experience] | None = None,
+    ) -> None:
+        """Generate a plan using the current task and relevant experiences."""
+
+        experiences = experiences or []
+
+        user_content = self._build_user_prompt(
+            state.task,
+            experiences,
+        )
 
         messages = [
             {
@@ -70,7 +82,7 @@ class Planner:
             },
             {
                 "role": "user",
-                "content": state.task,
+                "content": user_content,
             },
         ]
 
@@ -88,6 +100,38 @@ class Planner:
             plan_text = response.choices[0].message.content or ""
 
             state.plan = self._parse_plan(plan_text)
+
+    def _build_user_prompt(
+        self,
+        task: str,
+        experiences: list[Experience],
+    ) -> str:
+        """Build the planner prompt with optional memory context."""
+
+        if not experiences:
+            return task
+
+        context_lines = [
+            "Relevant experience from previous executions:",
+            "",
+        ]
+
+        for i, experience in enumerate(experiences, start=1):
+            context_lines.append(
+                f"{i}. Previous task: {experience.task}"
+            )
+            context_lines.append(
+                f"   Diagnosis: {experience.diagnosis}"
+            )
+            context_lines.append(
+                f"   Improvement: {experience.improvement}"
+            )
+            context_lines.append("")
+
+        context_lines.append("Current task:")
+        context_lines.append(task)
+
+        return "\n".join(context_lines)
 
     def _parse_plan(self, plan_text: str) -> list[str]:
         """

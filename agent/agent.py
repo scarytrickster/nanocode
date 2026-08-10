@@ -15,6 +15,7 @@ from agent.executor import Executor
 from agent.state import get_system_prompt
 from agent.planner import Planner
 from agent.evaluator import Evaluator
+from agent.memory import Experience, Memory
 
 
 @dataclass
@@ -74,6 +75,8 @@ class NanoCodeAgent:
         self.reflector = Reflector(
             tracer=self.tracer
         )
+
+        self.memory = Memory()
     
         self.messages = (
             messages
@@ -108,7 +111,20 @@ class NanoCodeAgent:
 
         state = self.create_state(task)
 
-        self.planner.run(state)
+            # Retrieve relevant previous experiences
+        experiences = self.memory.retrieve(task)
+
+        self.tracer.record(
+            "memory.retrieved",
+            component="memory",
+            task=task,
+            matches=len(experiences),
+        )
+
+        self.planner.run(
+            state,
+            experiences=experiences,
+        )
 
         self.executor.run(state)
 
@@ -118,6 +134,23 @@ class NanoCodeAgent:
             state,
             evaluation,
         )   
+
+        if reflection.should_improve:
+            experience = Experience(
+                task=state.task,
+                diagnosis=reflection.diagnosis,
+                improvement=reflection.improvement,
+                success=evaluation.success,
+            )
+    
+            self.memory.add(experience)
+
+            self.tracer.record(
+                "memory.stored",
+                component="memory",
+                task=state.task,
+                success=evaluation.success,
+            )
 
         return state.final_response
 
