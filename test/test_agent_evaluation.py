@@ -28,3 +28,18 @@ assert evaluation.data["success"] is True
 assert evaluation.data["score"] == 1.0
 
 print("✅ Agent → Evaluator integration test passed")
+
+reflection_events = [
+    event
+    for event in events
+    if event.name == "reflection.completed"
+]
+
+assert len(reflection_events) == 1
+
+reflection = reflection_events[0]
+
+assert reflection.component == "reflector"
+assert reflection.data["should_improve"] is False
+
+print("✅ Agent → Evaluator → Reflector integration test passed")

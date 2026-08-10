@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent import state
+from agent.reflector import Reflector
 from agent.tracer import Tracer
 from config.settings import MODEL, client
 from models.config import AgentConfig
@@ -69,6 +70,11 @@ class NanoCodeAgent:
             tracer=self.tracer
         )
 
+        # Reflector shares the tracer
+        self.reflector = Reflector(
+            tracer=self.tracer
+        )
+    
         self.messages = (
             messages
             if messages is not None
@@ -107,6 +113,11 @@ class NanoCodeAgent:
         self.executor.run(state)
 
         evaluation = self.evaluator.evaluate(state)
+
+        reflection = self.reflector.reflect(
+            state,
+            evaluation,
+        )   
 
         return state.final_response
 
