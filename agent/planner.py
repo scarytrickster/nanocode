@@ -65,6 +65,7 @@ class Planner:
         self,
         state: AgentState,
         experiences: list[Experience] | None = None,
+        retry_context: dict[str, str] | None = None,
     ) -> None:
         """Generate a plan using the current task and relevant experiences."""
 
@@ -73,6 +74,7 @@ class Planner:
         user_content = self._build_user_prompt(
             state.task,
             experiences,
+            retry_context,
         )
 
         messages = [
@@ -105,28 +107,45 @@ class Planner:
         self,
         task: str,
         experiences: list[Experience],
+        retry_context: dict[str, str] | None = None,
     ) -> str:
-        """Build the planner prompt with optional memory context."""
+        """Build the planner prompt with optional memory and retry context."""
 
-        if not experiences:
+        context_lines: list[str] = []
+
+        if experiences:
+            context_lines.extend(
+                [
+                    "Relevant experience from previous executions:",
+                    "",
+                ]
+            )
+
+            for i, experience in enumerate(experiences, start=1):
+                context_lines.append(
+                    f"{i}. Previous task: {experience.task}"
+                )
+                context_lines.append(
+                    f"   Diagnosis: {experience.diagnosis}"
+                )
+                context_lines.append(
+                    f"   Improvement: {experience.improvement}"
+                )
+                context_lines.append("")
+
+        if retry_context:
+            context_lines.extend(
+                [
+                    "Previous attempt failed:",
+                    "",
+                    f"Diagnosis: {retry_context.get('diagnosis', '')}",
+                    f"Improvement: {retry_context.get('improvement', '')}",
+                    "",
+                ]
+            )
+
+        if not context_lines:
             return task
-
-        context_lines = [
-            "Relevant experience from previous executions:",
-            "",
-        ]
-
-        for i, experience in enumerate(experiences, start=1):
-            context_lines.append(
-                f"{i}. Previous task: {experience.task}"
-            )
-            context_lines.append(
-                f"   Diagnosis: {experience.diagnosis}"
-            )
-            context_lines.append(
-                f"   Improvement: {experience.improvement}"
-            )
-            context_lines.append("")
 
         context_lines.append("Current task:")
         context_lines.append(task)

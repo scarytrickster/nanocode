@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-
 @dataclass
 class ToolCall:
     """Represents a tool call from the LLM."""
@@ -15,3 +14,4 @@ class AgentConfig:
     auto_approve: bool = False
     plan_mode: bool = False
     max_iterations: int = 50
+    max_retries: int = 2

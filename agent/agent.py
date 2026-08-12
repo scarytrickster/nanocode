@@ -1,6 +1,5 @@
 from pyexpat.errors import messages
 import sys
-from dataclasses import dataclass, field
 from typing import Any
 
 from agent import state
@@ -12,29 +11,29 @@ from tools import get_all_tools
 from tools.base import Tool
 
 from agent.executor import Executor
-from agent.state import get_system_prompt
+from agent.state import AgentState,get_system_prompt
 from agent.planner import Planner
 from agent.evaluator import Evaluator
 from agent.memory import Experience, Memory
 
 
-@dataclass
-class AgentState:
-    """Mutable state for one agent run."""
+# @dataclass
+# class AgentState:
+#     """Mutable state for one agent run."""
 
-    task: str
-    messages: list[dict[str, Any]]
-    tools: list[Tool]
-    config: AgentConfig
-    iteration: int = 0
-    status: str = "running"
-    final_response: str = ""
-    tools_by_name: dict[str, Tool] = field(init=False)
-    tool_schemas: list[dict[str, Any]] = field(init=False)
+#     task: str
+#     messages: list[dict[str, Any]]
+#     tools: list[Tool]
+#     config: AgentConfig
+#     iteration: int = 0
+#     status: str = "running"
+#     final_response: str = ""
+#     tools_by_name: dict[str, Tool] = field(init=False)
+#     tool_schemas: list[dict[str, Any]] = field(init=False)
 
-    def __post_init__(self) -> None:
-        self.tools_by_name = {tool.name: tool for tool in self.tools}
-        self.tool_schemas = [tool.to_schema() for tool in self.tools]
+#     def __post_init__(self) -> None:
+#         self.tools_by_name = {tool.name: tool for tool in self.tools}
+#         self.tool_schemas = [tool.to_schema() for tool in self.tools]
 
 
 class NanoCodeAgent:
@@ -107,11 +106,11 @@ class NanoCodeAgent:
         )
 
     def run(self, task: str) -> str:
-        """Run a task, evaluate the result, and return the final response."""
+        """Run a task with evaluation-driven retries."""
 
         state = self.create_state(task)
 
-            # Retrieve relevant previous experiences
+        # Retrieve relevant previous experiences once.
         experiences = self.memory.retrieve(task)
 
         self.tracer.record(
@@ -121,38 +120,98 @@ class NanoCodeAgent:
             matches=len(experiences),
         )
 
-        self.planner.run(
-            state,
-            experiences=experiences,
-        )
+        retry_context: dict[str, str] | None = None
+        last_reflection = None
 
-        self.executor.run(state)
+        while True:
 
-        evaluation = self.evaluator.evaluate(state)
+            # Plan using memory + optional retry context.
+            self.planner.run(
+                state,
+                experiences=experiences,
+                retry_context=retry_context,
+            )
 
-        reflection = self.reflector.reflect(
-            state,
-            evaluation,
-        )   
+            # Execute the current attempt.
+            self.executor.run(state)
 
-        if reflection.should_improve:
+            # Evaluate the attempt.
+            evaluation = self.evaluator.evaluate(state)
+
+            # Always reflect after evaluation.
+            reflection = self.reflector.reflect(
+                state,
+                evaluation,
+            )
+
+            last_reflection = reflection
+
+            # Successful execution → stop immediately.
+            if evaluation.success:
+                if state.retry_count > 0:
+                    self.tracer.record(
+                        "retry.completed",
+                        component="agent",
+                        attempt=state.retry_count,
+                        status="success",
+                    )
+
+                break
+
+            # Check retry limit.
+            if state.retry_count >= state.config.max_retries:
+                self.tracer.record(
+                    "retry.exhausted",
+                    component="agent",
+                    attempts=state.retry_count,
+                )
+                break
+
+            # Reflection must provide an improvement before retrying.
+            if not reflection.should_improve:
+                break
+
+            # Build context for the next planning attempt.
+            retry_context = {
+                "diagnosis": reflection.diagnosis,
+                "improvement": reflection.improvement,
+            }
+
+            state.retry_count += 1
+
+            self.tracer.record(
+                "retry.started",
+                component="agent",
+                attempt=state.retry_count,
+                reason="evaluation_failed",
+            )
+
+
+        # Store one experience only after the final attempt.
+        if (
+            not evaluation.success
+            and last_reflection is not None
+            and last_reflection.should_improve
+        ):
             experience = Experience(
                 task=state.task,
-                diagnosis=reflection.diagnosis,
-                improvement=reflection.improvement,
-                success=evaluation.success,
+                diagnosis=last_reflection.diagnosis,
+                improvement=last_reflection.improvement,
+                success=False,
             )
     
             self.memory.add(experience)
-
+    
             self.tracer.record(
                 "memory.stored",
                 component="memory",
                 task=state.task,
-                success=evaluation.success,
+                success=False,
             )
 
         return state.final_response
+
+
 
 def run_agent(
     messages: list[dict[str, Any]],

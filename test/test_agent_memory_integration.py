@@ -4,11 +4,25 @@ from agent.evaluator import EvaluationResult
 
 class FakePlanner:
     def __init__(self):
+        self.calls = []
         self.received_experiences = None
+        self.received_retry_context = None
 
-    def run(self, state, experiences=None):
+    def run(
+        self,
+        state,
+        experiences=None,
+        retry_context=None,
+    ):
         self.received_experiences = experiences
-        state.plan = ["Test plan"]
+        self.received_retry_context = retry_context
+
+        self.calls.append(
+            {
+                "experiences": experiences,
+                "retry_context": retry_context,
+            }
+        )
 
 
 class FakeExecutor:

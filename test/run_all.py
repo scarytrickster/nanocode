@@ -14,6 +14,10 @@ TESTS = [
     "test.test_planner_memory",
     "test.test_agent_memory",
     "test.test_agent_memory_integration",
+    "test.test_agent_memory_e2e",
+    "test.test_planner_retry",
+    "test.test_agent_retry",
+    "test.test_agent_retry_memory",
 ]
 
 

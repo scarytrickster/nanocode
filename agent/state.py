@@ -25,6 +25,7 @@ class AgentState:
     tools: list[Tool] = field(default_factory=list)
     config: AgentConfig = field(default_factory=AgentConfig)
     iteration: int = 0
+    retry_count: int = 0
     status: AgentStatus = AgentStatus.RUNNING
     final_response: str = ""
     plan: list[str] = field(default_factory=list)

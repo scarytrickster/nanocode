@@ -1,12 +1,13 @@
+from dataclasses import field
 from typing import Any
 
 
 class Tool:
     """Base class for all tools."""
-
+    
     name: str = ""
     description: str = ""
-    parameters: dict[str, Any] = {}
+    parameters: dict[str, Any] = field(default_factory=dict)
     is_read_only: bool = False
 
     def execute(self, args: dict[str, Any]) -> str:
