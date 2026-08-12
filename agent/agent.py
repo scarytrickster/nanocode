@@ -231,7 +231,6 @@ def run_agent(
     executor = Executor()
     executor.run(state)
     return state.final_response
-
 def print_banner() -> None:
     """Print the application banner."""
     print("+----------------------------------------------+")
@@ -272,3 +271,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
