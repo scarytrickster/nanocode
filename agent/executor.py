@@ -1,4 +1,3 @@
-
 """
 agent/executor.py
 
@@ -17,15 +16,11 @@ It DOES NOT:
 from __future__ import annotations
 
 import json
-from pyexpat.errors import messages
 from typing import Any
 
-from httpcore import stream
-
-from agent import state
 from config.settings import MODEL, client
 from models.config import ToolCall
-from agent.state import AgentState,AgentStatus
+from agent.state import AgentState, AgentStatus
 from agent.tracer import Tracer
 
 
@@ -42,11 +37,11 @@ class Executor:
     # Public API
     # ---------------------------------------------------------
 
-
     def run(self, state: AgentState) -> str:
         """
         Execute the agent until it produces a final answer.
         """
+
         state.status = AgentStatus.RUNNING
 
         with self.tracer.span(
@@ -150,6 +145,9 @@ class Executor:
             state.status = AgentStatus.FAILED
             return reply
 
+    # ---------------------------------------------------------
+    # Message Building
+    # ---------------------------------------------------------
 
     def _build_messages(
         self,
@@ -178,8 +176,6 @@ class Executor:
 
         return messages
 
-   
-    
     # ---------------------------------------------------------
     # Stream Parsing
     # ---------------------------------------------------------
@@ -199,10 +195,11 @@ class Executor:
 
             choice = chunk.choices[0]
 
+            # Collect the response.
+            #
+            # Do NOT print here.
+            # The CLI renderer is responsible for presentation.
             if choice.delta.content:
-
-                print(choice.delta.content, end="", flush=True)
-
                 reply += choice.delta.content
 
             for tc in choice.delta.tool_calls or []:
@@ -226,8 +223,6 @@ class Executor:
             if choice.finish_reason:
                 finish_reason = choice.finish_reason
 
-        print()
-
         return reply, tool_calls, finish_reason
 
     # ---------------------------------------------------------
@@ -241,34 +236,26 @@ class Executor:
     ) -> str:
 
         try:
-
             args = json.loads(tool_call.arguments)
 
         except Exception as e:
-
             return f"Error parsing arguments: {e}"
 
         tool = tools_by_name.get(tool_call.name)
 
         if tool is None:
-
             return f"Unknown tool: {tool_call.name}"
 
-        if (
-            self._plan_mode(tool, args)
-        ):
-
+        if self._plan_mode(tool, args):
             return (
                 "Plan mode enabled. "
                 "Write tools are disabled."
             )
 
         try:
-
             return tool.execute(args)
 
         except Exception as e:
-
             return (
                 f"Error executing "
                 f"{tool_call.name}: {e}"

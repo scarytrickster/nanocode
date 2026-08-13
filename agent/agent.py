@@ -15,6 +15,7 @@ from agent.state import AgentState,get_system_prompt
 from agent.planner import Planner
 from agent.evaluator import Evaluator
 from agent.memory import Experience, Memory
+from collections.abc import Callable
 
 
 # @dataclass
@@ -45,14 +46,19 @@ class NanoCodeAgent:
         config: AgentConfig | None = None,
         executor: Executor | None = None,
         messages: list[dict[str, Any]] | None = None,
+        console_trace: bool = True,
+        trace_callback: Callable[[Any], None] | None = None,
     ) -> None:
 
         self.tools = tools if tools is not None else get_all_tools()
         self.config = config if config is not None else AgentConfig()
 
         # One shared tracer for the entire agent
-        self.tracer = Tracer()
-
+        self.tracer = Tracer(
+            enabled=True,
+            console=console_trace,
+            on_event=trace_callback,
+        )
         # Executor shares the tracer
         self.executor = (
             executor

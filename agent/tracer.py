@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
 from typing import Any
+from collections.abc import Callable, Iterator
 
 
 @dataclass
@@ -21,10 +22,17 @@ class TraceEvent:
 
 
 class Tracer:
-    """Collects and displays events from an agent run."""
+    """Collects and optionally displays events from an agent run."""
 
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(
+    self,
+    enabled: bool = True,
+    console: bool = True,
+    on_event: Callable[[TraceEvent], None] | None = None,
+) -> None:
         self.enabled = enabled
+        self.console = console
+        self.on_event = on_event
         self.events: list[TraceEvent] = []
 
     def record(
@@ -50,9 +58,13 @@ class Tracer:
         )
 
         self.events.append(event)
-        self._print_event(event)
 
-    # ADD span() HERE
+        if self.on_event is not None:
+            self.on_event(event)
+
+        if self.console:
+            self._print_event(event)
+
     @contextmanager
     def span(
         self,
