@@ -15,3 +15,4 @@ class AgentConfig:
     plan_mode: bool = False
     max_iterations: int = 50
     max_retries: int = 2
+    approval_mode: str = "always"  # Options: "always", "confirm", "auto"

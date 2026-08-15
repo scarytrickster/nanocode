@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
-from typing import Any
-from collections.abc import Callable, Iterator
+from typing import Any, Callable, Iterator
 
 
 @dataclass
@@ -25,11 +23,11 @@ class Tracer:
     """Collects and optionally displays events from an agent run."""
 
     def __init__(
-    self,
-    enabled: bool = True,
-    console: bool = True,
-    on_event: Callable[[TraceEvent], None] | None = None,
-) -> None:
+        self,
+        enabled: bool = True,
+        console: bool = True,
+        on_event: Callable[[TraceEvent], None] | None = None,
+    ) -> None:
         self.enabled = enabled
         self.console = console
         self.on_event = on_event
@@ -73,8 +71,20 @@ class Tracer:
         **data: Any,
     ) -> Iterator[None]:
         """
-        Measure the duration of an operation and automatically
-        record started, completed, or failed events.
+        Measure the duration of an operation.
+
+        Normally records:
+            started → completed
+
+        On ordinary exceptions:
+            started → failed
+
+        On controlled exceptions such as human approval rejection:
+            started
+            (no failed/completed event)
+
+        The exception is still re-raised so the caller can
+        handle it appropriately.
         """
 
         start = perf_counter()
@@ -90,6 +100,11 @@ class Tracer:
 
         except Exception as exc:
             duration_ms = (perf_counter() - start) * 1000
+
+            # Some exceptions represent intentional control flow
+            # rather than an actual execution failure.
+            if getattr(exc, "suppress_trace_failure", False):
+                raise
 
             self.record(
                 f"{name}.failed",

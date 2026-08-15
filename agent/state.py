@@ -14,6 +14,8 @@ class AgentStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    MAX_ITERATIONS = "max_iterations"
+    HUMAN_REJECTED = "human_rejected"
 
 
 @dataclass

@@ -11,11 +11,12 @@ from tools import get_all_tools
 from tools.base import Tool
 
 from agent.executor import Executor
-from agent.state import AgentState,get_system_prompt
+from agent.state import AgentState, AgentStatus,get_system_prompt
 from agent.planner import Planner
 from agent.evaluator import Evaluator
 from agent.memory import Experience, Memory
 from collections.abc import Callable
+from agent.approval import ApprovalManager, ApprovalRejected
 
 
 # @dataclass
@@ -53,6 +54,10 @@ class NanoCodeAgent:
         self.tools = tools if tools is not None else get_all_tools()
         self.config = config if config is not None else AgentConfig()
 
+        self.approval = ApprovalManager(
+            mode=self.config.approval_mode
+        )
+
         # One shared tracer for the entire agent
         self.tracer = Tracer(
             enabled=True,
@@ -63,7 +68,10 @@ class NanoCodeAgent:
         self.executor = (
             executor
             if executor is not None
-            else Executor(tracer=self.tracer)
+            else Executor(
+                tracer=self.tracer,
+                approval=self.approval,
+            )
         )
 
         # Planner shares the tracer
@@ -139,7 +147,24 @@ class NanoCodeAgent:
             )
 
             # Execute the current attempt.
-            self.executor.run(state)
+            try:
+                self.executor.run(state)
+
+            except ApprovalRejected:
+                state.status = AgentStatus.HUMAN_REJECTED
+
+                self.tracer.record(
+                    "agent.stopped",
+                    component="agent",
+                    reason="human_rejected",
+                )
+
+                state.final_response = (
+                    "Execution stopped: "
+                    "the requested tool action was rejected by the human."
+                )
+    
+                return state.final_response
 
             # Evaluate the attempt.
             evaluation = self.evaluator.evaluate(state)

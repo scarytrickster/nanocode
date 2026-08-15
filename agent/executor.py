@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent import state
+from agent.approval import ApprovalManager, ApprovalRejected
 from config.settings import MODEL, client
 from models.config import ToolCall
 from agent.state import AgentState, AgentStatus
@@ -29,9 +31,14 @@ class Executor:
     Executes one complete agent task.
     """
 
-    def __init__(self, tracer: Tracer | None = None):
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        approval: ApprovalManager | None = None,
+    ):
         self.client = client
         self.tracer = tracer or Tracer()
+        self.approval = approval or ApprovalManager()
 
     # ---------------------------------------------------------
     # Public API
@@ -39,7 +46,8 @@ class Executor:
 
     def run(self, state: AgentState) -> str:
         """
-        Execute the agent until it produces a final answer.
+        Execute the agent until it produces a final answer
+        or human approval stops execution.
         """
 
         state.status = AgentStatus.RUNNING
@@ -90,6 +98,10 @@ class Executor:
                     tool_calls=len(tool_calls),
                 )
 
+                # -------------------------------------------------
+                # Tool calls
+                # -------------------------------------------------
+
                 if finish_reason == "tool_calls" and tool_calls:
                     assistant_message = {
                         "role": "assistant",
@@ -110,15 +122,28 @@ class Executor:
                     state.messages.append(assistant_message)
 
                     for tool_call in tool_calls:
-                        with self.tracer.span(
-                            "tool",
-                            component="executor",
-                            tool=tool_call.name,
-                        ):
-                            result = self._execute_tool(
-                                tool_call,
-                                tools_by_name,
+                        try:
+                            with self.tracer.span(
+                                "tool",
+                                component="executor",
+                                tool=tool_call.name,
+                            ):
+                                result = self._execute_tool(
+                                    tool_call,
+                                    tools_by_name,
+                                )
+
+                        except ApprovalRejected as e:
+                            state.status = AgentStatus.HUMAN_REJECTED
+
+                            self.tracer.record(
+                                "execution.stopped",
+                                component="executor",
+                                reason="human_rejected",
+                                tool=tool_call.name,
                             )
+        
+                            raise
 
                         state.messages.append(
                             {
@@ -129,6 +154,10 @@ class Executor:
                         )
 
                     continue
+
+                # -------------------------------------------------
+                # Final response
+                # -------------------------------------------------
 
                 state.messages.append(
                     {
@@ -142,7 +171,18 @@ class Executor:
 
                 return reply
 
-            state.status = AgentStatus.FAILED
+            # -----------------------------------------------------
+            # Max iterations reached
+            # -----------------------------------------------------
+
+            state.status = AgentStatus.MAX_ITERATIONS
+
+            self.tracer.record(
+                "execution.max_iterations",
+                component="executor",
+                reason="max_iterations",
+            )
+
             return reply
 
     # ---------------------------------------------------------
@@ -153,7 +193,6 @@ class Executor:
         self,
         state: AgentState,
     ) -> list[dict[str, Any]]:
-
         messages = list(state.messages)
 
         if state.plan:
@@ -184,26 +223,19 @@ class Executor:
         self,
         stream,
     ) -> tuple[str, list[ToolCall], str | None]:
-
         reply = ""
-
         tool_calls: list[ToolCall] = []
-
         finish_reason = None
 
         for chunk in stream:
-
             choice = chunk.choices[0]
 
-            # Collect the response.
-            #
             # Do NOT print here.
             # The CLI renderer is responsible for presentation.
             if choice.delta.content:
                 reply += choice.delta.content
 
             for tc in choice.delta.tool_calls or []:
-
                 if tc.index >= len(tool_calls):
                     tool_calls.append(
                         ToolCall(
@@ -215,9 +247,7 @@ class Executor:
                 call = tool_calls[tc.index]
 
                 call.id += tc.id or ""
-
                 call.name += tc.function.name or ""
-
                 call.arguments += tc.function.arguments or ""
 
             if choice.finish_reason:
@@ -235,27 +265,107 @@ class Executor:
         tools_by_name: dict[str, Any],
     ) -> str:
 
+        # -----------------------------------------------------
+        # Parse arguments
+        # -----------------------------------------------------
+
         try:
             args = json.loads(tool_call.arguments)
 
         except Exception as e:
+            self.tracer.record(
+                "tool.failed",
+                component="executor",
+                tool=tool_call.name,
+                error=f"argument_parse_error: {e}",
+            )
+
             return f"Error parsing arguments: {e}"
+
+        # -----------------------------------------------------
+        # Find tool
+        # -----------------------------------------------------
 
         tool = tools_by_name.get(tool_call.name)
 
         if tool is None:
+            self.tracer.record(
+                "tool.failed",
+                component="executor",
+                tool=tool_call.name,
+                error="unknown_tool",
+            )
+
             return f"Unknown tool: {tool_call.name}"
 
+        # -----------------------------------------------------
+        # Plan mode
+        # -----------------------------------------------------
+
         if self._plan_mode(tool, args):
+            self.tracer.record(
+                "tool.rejected",
+                component="executor",
+                tool=tool_call.name,
+                reason="plan_mode",
+            )
+
             return (
                 "Plan mode enabled. "
                 "Write tools are disabled."
             )
 
+        # -----------------------------------------------------
+        # Human approval
+        # -----------------------------------------------------
+
+        approved = self.approval.approve_tool(
+            tool_call.name,
+            args,
+        )
+
+        if not approved:
+            self.tracer.record(
+                "tool.rejected",
+                component="executor",
+                tool=tool_call.name,
+                reason="human_rejected",
+            )
+
+            raise ApprovalRejected(
+                f"Tool execution rejected by human: "
+                f"{tool_call.name}"
+            )
+
+        # -----------------------------------------------------
+        # Execute tool
+        # -----------------------------------------------------
+
+        self.tracer.record(
+            "tool.approved",
+            component="executor",
+            tool=tool_call.name,
+        )
+
         try:
-            return tool.execute(args)
+            result = tool.execute(args)
+
+            self.tracer.record(
+                "tool.executed",
+                component="executor",
+                tool=tool_call.name,
+            )
+
+            return result
 
         except Exception as e:
+            self.tracer.record(
+                "tool.failed",
+                component="executor",
+                tool=tool_call.name,
+                error=str(e),
+            )
+
             return (
                 f"Error executing "
                 f"{tool_call.name}: {e}"
@@ -270,7 +380,6 @@ class Executor:
         tool,
         args,
     ) -> bool:
-
         del args
 
         return False

@@ -2,6 +2,7 @@ from json import tool
 
 
 class TerminalRenderer:
+
     def print_info(self, message: str) -> None:
         print(f"\n● {message}")
 
@@ -30,6 +31,18 @@ class TerminalRenderer:
         elif event.name == "executor.completed":
             self.print_success("Execution complete")
 
+        elif event.name == "execution.stopped":
+            reason = event.data.get("reason", "")
+
+            if reason == "human_rejected":
+                self.print_error(
+                    "Execution stopped — human rejected the action"
+                )
+            else:
+                self.print_error(
+                    "Execution stopped"
+                )
+
         elif event.name == "tool.started":
             tool = event.data.get("tool", "tool")
             self.print_tool_started(tool)
@@ -37,6 +50,14 @@ class TerminalRenderer:
         elif event.name == "tool.completed":
             tool = event.data.get("tool", "tool")
             self.print_tool_completed(tool)
+
+        elif event.name == "tool.executed":
+            tool = event.data.get("tool", "tool")
+            self.print_tool_completed(tool)
+
+        elif event.name == "tool.rejected":
+            tool = event.data.get("tool", "tool")
+            self.print_tool_rejected(tool)
 
         elif event.name == "tool.failed":
             tool = event.data.get("tool", "tool")
@@ -62,6 +83,14 @@ class TerminalRenderer:
         elif event.name == "retry.exhausted":
             self.print_error("Retry limit reached")
 
+        elif event.name == "agent.stopped":
+            reason = event.data.get("reason", "")
+
+            if reason == "human_rejected":
+                self.print_error(
+                    "Agent stopped — human rejected the action"
+                )
+
         elif event.name.endswith(".failed"):
             self.print_error(
                 f"{event.component} failed"
@@ -70,10 +99,11 @@ class TerminalRenderer:
     def print_tool_started(self, tool: str) -> None:
         print(f"  ↳ {tool}")
 
-
     def print_tool_completed(self, tool: str) -> None:
         print(f"  ✓ {tool}")
 
+    def print_tool_rejected(self, tool: str) -> None:
+        print(f"  ✗ {tool} — rejected by human")
 
     def print_tool_failed(self, tool: str) -> None:
         print(f"  ✗ {tool}")
