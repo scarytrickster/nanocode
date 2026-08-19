@@ -39,3 +39,28 @@ class RLMRuntime:
         self.budget.consume_iteration()
 
         return self.call_handler.call(child)
+
+    def call_many(
+        self,
+        parent: RLMContext,
+        tasks: list[tuple[str, str]],
+    ) -> list[RLMResult]:
+        """
+        Execute multiple child RLM calls.
+
+        Each tuple contains:
+            (task, content)
+        """
+
+        results: list[RLMResult] = []
+
+        for task, content in tasks:
+            result = self.call(
+                parent=parent,
+                task=task,
+                content=content,
+            )
+
+            results.append(result)
+
+        return results

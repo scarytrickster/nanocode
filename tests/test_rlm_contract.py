@@ -1,3 +1,5 @@
+from xml.sax import handler
+
 from rlm.budget import RLMBudget
 from rlm.context import RLMContext
 from rlm.controller import RLMController
@@ -182,9 +184,13 @@ def test_repl_can_make_recursive_call():
 
     handler = FakeCallHandler()
 
+    runtime = RLMRuntime(
+        call_handler=handler,
+    )
+
     repl = RLMREPL(
         context=context,
-        call_handler=handler,
+        runtime=runtime,
     )
 
     result = repl.call(
@@ -209,7 +215,7 @@ def test_repl_can_make_recursive_call():
     assert handler.calls[0].content == "agent source"
 
 
-def test_repl_without_call_handler_rejects_recursive_call():
+def test_repl_without_runtime_rejects_recursive_call():
 
     context = RLMContext(
         task="Test",
@@ -317,7 +323,7 @@ def test_runtime_respects_max_depth():
         task="Parent",
     )
 
-    # Parent depth = 0 → child depth = 1 is allowed.
+    # Parent depth = 0 → child depth = 1 is all owed.
     result = runtime.call(
         parent=parent,
         task="Child",
@@ -341,3 +347,133 @@ def test_runtime_respects_max_depth():
 
     except RuntimeError as exc:
         assert "recursion budget exceeded" in str(exc)
+
+def test_repl_call_uses_runtime_budget():
+
+    handler = FakeCallHandler()
+
+    budget = RLMBudget(
+        max_depth=1,
+        max_children=1,
+        max_iterations=10,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    context = RLMContext(
+        task="Parent",
+    )
+
+    repl = RLMREPL(
+        context=context,
+        runtime=runtime,
+    )
+
+    first = repl.call(
+        task="Child 1",
+    )
+
+    assert first.success is True
+    assert first.depth == 1
+
+    try:
+        repl.call(
+            task="Child 2",
+        )
+        assert False, "Expected child budget failure"
+
+    except RuntimeError as exc:
+        assert "recursion budget exceeded" in str(exc)
+
+    assert len(handler.calls) == 1
+
+
+def test_runtime_can_execute_multiple_children():
+
+    handler = FakeCallHandler()
+
+    budget = RLMBudget(
+        max_depth=2,
+        max_children=3,
+        max_iterations=10,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    parent = RLMContext(
+        task="Analyze project",
+    )
+
+    results = runtime.call_many(
+        parent=parent,
+        tasks=[
+            ("Analyze agent", "agent source"),
+            ("Analyze tools", "tool source"),
+            ("Analyze memory", "memory source"),
+        ],
+    )
+
+    assert len(results) == 3
+
+    assert all(result.success for result in results)
+
+    assert [result.depth for result in results] == [
+        1,
+        1,
+        1,
+    ]
+
+    assert [result.answer for result in results] == [
+        "Child answered: Analyze agent",
+        "Child answered: Analyze tools",
+        "Child answered: Analyze memory",
+    ]
+
+    assert budget.children_created == 3
+    assert budget.iterations == 3
+
+    assert len(handler.calls) == 3
+
+
+def test_runtime_call_many_respects_child_budget():
+
+    handler = FakeCallHandler()
+
+    budget = RLMBudget(
+        max_depth=2,
+        max_children=2,
+        max_iterations=10,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    parent = RLMContext(
+        task="Analyze project",
+    )
+
+    try:
+        runtime.call_many(
+            parent=parent,
+            tasks=[
+                ("Child 1", ""),
+                ("Child 2", ""),
+                ("Child 3", ""),
+            ],
+        )
+
+        assert False, "Expected child budget failure"
+
+    except RuntimeError as exc:
+        assert "recursion budget exceeded" in str(exc)
+
+    assert len(handler.calls) == 2
+    assert budget.children_created == 2
