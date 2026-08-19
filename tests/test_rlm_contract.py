@@ -1,70 +1,70 @@
-from rlm.budget import RLMBudget
 from rlm.context import RLMContext
-from rlm.controller import RLMController
-from rlm.result import RLMResult
-from rlm.worker import RLMWorker
+from rlm.repl import RLMREPL
 
 
-class FakeWorker(RLMWorker):
-
-    def run(self, context: RLMContext) -> RLMResult:
-        return RLMResult(
-            answer=f"Processed: {context.task}",
-            success=True,
-            depth=context.depth,
-        )
-
-
-def test_controller_runs_worker():
-
-    controller = RLMController(
-        worker=FakeWorker(),
-    )
+def test_repl_inspects_context():
 
     context = RLMContext(
-        task="Analyze this project",
+        task="Analyze document",
+        content="Python is a programming language.",
     )
 
-    result = controller.run(context)
+    repl = RLMREPL(context)
 
-    assert result.success is True
-    assert result.answer == "Processed: Analyze this project"
-    assert result.depth == 0
+    assert repl.inspect() == "Python is a programming language."
 
 
-def test_child_context_increments_depth():
-
-    parent = RLMContext(
-        task="Parent task",
-    )
-
-    child = parent.child(
-        task="Child task",
-    )
-
-    assert parent.depth == 0
-    assert child.depth == 1
-
-
-def test_budget_limits_iterations():
-
-    budget = RLMBudget(
-        max_iterations=1,
-    )
-
-    controller = RLMController(
-        worker=FakeWorker(),
-        budget=budget,
-    )
+def test_repl_can_slice_context():
 
     context = RLMContext(
-        task="Test",
+        task="Analyze document",
+        content="0123456789",
     )
 
-    controller.run(context)
+    repl = RLMREPL(context)
 
-    try:
-        controller.run(context)
-        assert False, "Expected budget failure"
-    except RuntimeError as exc:
-        assert "iteration budget exceeded" in str(exc)
+    assert repl.slice(2, 6) == "2345"
+
+
+def test_repl_can_search_context():
+
+    context = RLMContext(
+        task="Find Python references",
+        content="Python is great. Python is popular.",
+    )
+
+    repl = RLMREPL(context)
+
+    matches = repl.search("Python")
+
+    assert matches == [0, 17]
+
+
+def test_repl_variables_are_isolated():
+
+    context = RLMContext(
+        task="Test variables",
+    )
+
+    repl = RLMREPL(context)
+
+    repl.set("answer", "Python")
+
+    assert repl.get("answer") == "Python"
+    assert repl.get("missing") is None
+
+
+def test_repl_variables_returns_copy():
+
+    context = RLMContext(
+        task="Test variables",
+    )
+
+    repl = RLMREPL(context)
+
+    repl.set("value", 42)
+
+    variables = repl.variables()
+    variables["value"] = 100
+
+    assert repl.get("value") == 42
