@@ -1,28 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
+from rlm.call import RLMCallHandler
 from rlm.context import RLMContext
+from rlm.result import RLMResult
 
 
 @dataclass
 class RLMREPL:
-    """
-    Programmatic environment available to an RLM.
-
-    The REPL provides controlled access to the current context and
-    exposes operations that the RLM can use to inspect and manipulate
-    that context.
-    """
+    """Controlled programmatic environment for an RLM."""
 
     context: RLMContext
+    call_handler: RLMCallHandler | None = None
 
     _variables: dict[str, Any] = field(default_factory=dict)
 
     def inspect(self, start: int = 0, end: int | None = None) -> str:
-        """Return a section of the current context."""
-
         content = self.context.content
 
         if end is None:
@@ -31,12 +26,6 @@ class RLMREPL:
         return content[start:end]
 
     def search(self, query: str) -> list[int]:
-        """
-        Find occurrences of a string in the current context.
-
-        Returns the character offsets where matches begin.
-        """
-
         if not query:
             return []
 
@@ -57,21 +46,32 @@ class RLMREPL:
         return positions
 
     def slice(self, start: int, end: int) -> str:
-        """Return a specific context slice."""
-
         return self.context.content[start:end]
 
     def set(self, name: str, value: Any) -> None:
-        """Store a temporary REPL variable."""
-
         self._variables[name] = value
 
     def get(self, name: str, default: Any = None) -> Any:
-        """Retrieve a temporary REPL variable."""
-
         return self._variables.get(name, default)
 
     def variables(self) -> dict[str, Any]:
-        """Return a copy of the current REPL variables."""
-
         return dict(self._variables)
+
+    def call(
+        self,
+        task: str,
+        content: str = "",
+    ) -> RLMResult:
+        """Make a controlled recursive call."""
+
+        if self.call_handler is None:
+            raise RuntimeError(
+                "Recursive calls are not available in this REPL"
+            )
+
+        child_context = self.context.child(
+            task=task,
+            content=content,
+        )
+
+        return self.call_handler.call(child_context)
