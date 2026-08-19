@@ -11,7 +11,7 @@ from tools import get_all_tools
 from tools.base import Tool
 
 from agent.executor import Executor
-from agent.state import AgentState,get_system_prompt
+from agent.state import AgentState, AgentStatus,get_system_prompt
 from agent.planner import Planner
 from agent.evaluator import Evaluator
 from agent.memory import Experience, Memory
@@ -140,6 +140,18 @@ class NanoCodeAgent:
 
             # Execute the current attempt.
             self.executor.run(state)
+
+            # Human explicitly rejected an action.
+            # This is NOT a failed attempt.
+            # Do not evaluate, reflect, retry, or store memory.
+            if state.status == AgentStatus.HUMAN_REJECTED:
+                self.tracer.record(
+                    "agent.stopped",
+                    component="agent",
+                    reason="human_rejected",
+                )
+    
+                return state.final_response
 
             # Evaluate the attempt.
             evaluation = self.evaluator.evaluate(state)

@@ -14,6 +14,7 @@ class AgentStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    HUMAN_REJECTED = "human_rejected"
 
 
 @dataclass
