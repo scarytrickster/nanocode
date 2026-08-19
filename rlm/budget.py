@@ -14,7 +14,7 @@ class RLMBudget:
 
     def can_spawn_child(self, depth: int) -> bool:
         return (
-            depth < self.max_depth
+            depth <= self.max_depth
             and self.children_created < self.max_children
         )
 
