@@ -1,13 +1,25 @@
 from xml.sax import handler
 
+import agent
+from agent.agent import NanoCodeAgent
+from rlm import result
 from rlm.budget import RLMBudget
 from rlm.context import RLMContext
 from rlm.controller import RLMController
 from rlm.result import RLMResult
 from rlm.repl import RLMREPL
+from rlm.synthesizer import RLMSynthesizer
 from rlm.worker import RLMWorker
 from rlm.call import RLMCallHandler
 from rlm.runtime import RLMRuntime
+from rlm.result import RLMResult
+from rlm.nanocode_handler import NanoCodeCallHandler
+from agent.agent import NanoCodeAgent
+from rlm.nanocode_handler import (
+    NanoCodeCallHandler,
+    NanoCodeRequest,
+    create_nanocode_agent,
+)
 
 
 
@@ -24,6 +36,17 @@ class FakeWorker(RLMWorker):
             depth=context.depth,
         )
 
+
+    
+class FakeNanoCodeAgent:
+
+    def __init__(self, response="Fake NanoCode response"):
+        self.response = response
+        self.tasks = []
+
+    def run(self, task):
+        self.tasks.append(task)
+        return self.response
 
 # ---------------------------------------------------------------------------
 # RLM Controller tests
@@ -477,3 +500,419 @@ def test_runtime_call_many_respects_child_budget():
 
     assert len(handler.calls) == 2
     assert budget.children_created == 2
+
+
+def test_synthesizer_combines_successful_results():
+
+    synthesizer = RLMSynthesizer()
+
+    results = [
+        RLMResult(
+            answer="Agent analysis",
+            success=True,
+            depth=1,
+        ),
+        RLMResult(
+            answer="Tool analysis",
+            success=True,
+            depth=1,
+        ),
+        RLMResult(
+            answer="Memory analysis",
+            success=True,
+            depth=1,
+        ),
+    ]
+
+    result = synthesizer.synthesize(results)
+
+    assert result.success is True
+
+    assert result.answer == (
+        "Agent analysis\n\n"
+        "Tool analysis\n\n"
+        "Memory analysis"
+    )
+
+    assert result.depth == 1
+    assert result.children_created == 3
+
+
+def test_synthesizer_ignores_failed_results():
+
+    synthesizer = RLMSynthesizer()
+
+    results = [
+        RLMResult(
+            answer="Successful result",
+            success=True,
+            depth=1,
+        ),
+        RLMResult(
+            answer="",
+            success=False,
+            depth=1,
+        ),
+        RLMResult(
+            answer="Another successful result",
+            success=True,
+            depth=1,
+        ),
+    ]
+
+    result = synthesizer.synthesize(results)
+
+    assert result.success is True
+
+    assert result.answer == (
+        "Successful result\n\n"
+        "Another successful result"
+    )
+
+    assert result.children_created == 3
+
+
+def test_synthesizer_fails_when_all_results_fail():
+
+    synthesizer = RLMSynthesizer()
+
+    results = [
+        RLMResult(
+            answer="",
+            success=False,
+            depth=1,
+        ),
+        RLMResult(
+            answer="",
+            success=False,
+            depth=1,
+        ),
+    ]
+
+    result = synthesizer.synthesize(results)
+
+    assert result.success is False
+    assert result.answer == ""
+    assert result.children_created == 2
+
+
+def test_synthesizer_handles_empty_results():
+
+    synthesizer = RLMSynthesizer()
+
+    result = synthesizer.synthesize([])
+
+    assert result.success is False
+    assert result.answer == ""
+    assert result.children_created == 0
+
+
+def test_runtime_can_synthesize_multiple_children():
+
+    handler = FakeCallHandler()
+
+    budget = RLMBudget(
+        max_depth=2,
+        max_children=3,
+        max_iterations=10,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    parent = RLMContext(
+        task="Analyze project",
+    )
+
+    result = runtime.call_and_synthesize(
+        parent=parent,
+        tasks=[
+            ("Analyze agent", "agent source"),
+            ("Analyze tools", "tool source"),
+            ("Analyze memory", "memory source"),
+        ],
+    )
+
+    assert result.success is True
+
+    assert result.answer == (
+        "Child answered: Analyze agent\n\n"
+        "Child answered: Analyze tools\n\n"
+        "Child answered: Analyze memory"
+    )
+
+    assert result.depth == 1
+    assert result.children_created == 3
+
+    assert budget.children_created == 3
+    assert budget.iterations == 3
+
+
+def test_runtime_synthesis_respects_child_budget():
+
+    handler = FakeCallHandler()
+
+    budget = RLMBudget(
+        max_depth=2,
+        max_children=2,
+        max_iterations=10,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    parent = RLMContext(
+        task="Analyze project",
+    )
+
+    try:
+        runtime.call_and_synthesize(
+            parent=parent,
+            tasks=[
+                ("Child 1", ""),
+                ("Child 2", ""),
+                ("Child 3", ""),
+            ],
+        )
+
+        assert False, "Expected child budget failure"
+
+    except RuntimeError as exc:
+        assert "recursion budget exceeded" in str(exc)
+
+    assert len(handler.calls) == 2
+    assert budget.children_created == 2
+
+def test_nanocode_handler_executes_agent():
+
+    agent = FakeNanoCodeAgent(
+        response="Python is a programming language."
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    context = RLMContext(
+        task="Explain Python",
+        depth=1,
+    )
+
+    result = handler.call(context)
+
+    assert result.success is True
+    assert result.answer == (
+        "Python is a programming language."
+    )
+
+    assert result.depth == 1
+    assert agent.tasks == ["Explain Python"]
+
+
+def test_nanocode_handler_converts_none_to_failure():
+
+    agent = FakeNanoCodeAgent(
+        response=None,
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    context = RLMContext(
+        task="Test failure",
+        depth=1,
+    )
+
+    result = handler.call(context)
+
+    assert result.success is False
+    assert result.answer == ""
+    assert result.depth == 1
+
+def test_runtime_can_execute_nanocode_child():
+
+    agent = FakeNanoCodeAgent(
+        response="Child completed successfully",
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    budget = RLMBudget(
+        max_depth=2,
+        max_children=2,
+        max_iterations=5,
+    )
+
+    runtime = RLMRuntime(
+        call_handler=handler,
+        budget=budget,
+    )
+
+    parent = RLMContext(
+        task="Parent task",
+        content="Parent context",
+    )
+
+    result = runtime.call(
+        parent=parent,
+        task="Child task",
+        content="Child context",
+    )
+
+    assert result.success is True
+    assert result.answer == "Child completed successfully"
+    assert result.depth == 1
+
+    assert agent.tasks == ["Child task"]
+
+    assert budget.children_created == 1
+    assert budget.iterations == 1
+
+def test_nanocode_handler_preserves_rlm_context():
+
+    agent = FakeNanoCodeAgent(
+        response="Child completed",
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    context = RLMContext(
+        task="Analyze section",
+        content="Important source content",
+        depth=2,
+        metadata={
+            "parent_id": "root",
+            "section": "architecture",
+        },
+    )
+
+    result = handler.call(context)
+
+    assert result.success is True
+    assert result.answer == "Child completed"
+
+    request = handler.last_request
+
+    assert request is not None
+    assert request.task == "Analyze section"
+    assert request.content == "Important source content"
+    assert request.depth == 2
+
+    assert request.metadata == {
+        "parent_id": "root",
+        "section": "architecture",
+    }
+
+    # Real NanoCode interface receives only the task string.
+    assert agent.tasks == ["Analyze section"]
+
+def test_nanocode_handler_converts_result_object():
+
+    class FakeResult:
+        answer = "Structured child result"
+        success = True
+
+    agent = FakeNanoCodeAgent(
+        response=FakeResult(),
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    context = RLMContext(
+        task="Test structured result",
+        depth=1,
+    )
+
+    result = handler.call(context)
+
+    assert result.success is True
+    assert result.answer == "Structured child result"
+    assert result.depth == 1
+
+def test_nanocode_factory_creates_fresh_agents():
+
+    agent_a = create_nanocode_agent()
+    agent_b = create_nanocode_agent()
+
+    assert isinstance(agent_a, NanoCodeAgent)
+    assert isinstance(agent_b, NanoCodeAgent)
+
+    assert agent_a is not agent_b
+    assert agent_a.memory is not agent_b.memory
+    assert agent_a.messages is not agent_b.messages
+
+def test_nanocode_handler_can_use_real_agent_factory():
+
+    handler = NanoCodeCallHandler(
+        agent_factory=create_nanocode_agent,
+    )
+
+    assert isinstance(
+        handler.agent_factory(),
+        NanoCodeAgent,
+    )
+
+def test_nanocode_handler_uses_real_agent_interface(monkeypatch):
+
+    calls = []
+
+    class FakeAgent:
+        def run(self, task: str) -> str:
+            calls.append(task)
+            return "real interface response"
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: FakeAgent(),
+    )
+
+    context = RLMContext(
+        task="Explain Python",
+        content="Python context",
+        depth=1,
+    )
+
+    result = handler.call(context)
+
+    assert result.success is True
+    assert result.answer == "real interface response"
+    assert result.depth == 1
+    assert calls == ["Explain Python"]
+
+def test_nanocode_request_metadata_is_isolated():
+
+    agent = FakeNanoCodeAgent(
+        response="Child completed",
+    )
+
+    handler = NanoCodeCallHandler(
+        agent_factory=lambda: agent,
+    )
+
+    metadata = {
+        "section": "architecture",
+    }
+
+    context = RLMContext(
+        task="Analyze section",
+        metadata=metadata,
+    )
+
+    handler.call(context)
+
+    metadata["section"] = "changed"
+
+    assert handler.last_request is not None
+    assert handler.last_request.metadata == {
+        "section": "architecture",
+    }

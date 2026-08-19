@@ -4,6 +4,7 @@ from rlm.budget import RLMBudget
 from rlm.call import RLMCallHandler
 from rlm.context import RLMContext
 from rlm.result import RLMResult
+from rlm.synthesizer import RLMSynthesizer
 
 
 class RLMRuntime:
@@ -64,3 +65,24 @@ class RLMRuntime:
             results.append(result)
 
         return results
+
+    def call_and_synthesize(
+        self,
+        parent: RLMContext,
+        tasks: list[tuple[str, str]],
+        synthesizer: RLMSynthesizer | None = None,
+    ) -> RLMResult: 
+        """
+        Execute multiple child RLM calls and synthesize their results
+        into a single parent result.
+        """
+
+        results = self.call_many(
+            parent=parent,
+            tasks=tasks,
+        )
+
+        if synthesizer is None:
+            synthesizer = RLMSynthesizer()
+
+        return synthesizer.synthesize(results)
