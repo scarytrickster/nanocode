@@ -99,6 +99,8 @@ class Planner:
                 stream=False,
             )
 
+
+
             plan_text = response.choices[0].message.content or ""
 
             state.plan = self._parse_plan(plan_text)

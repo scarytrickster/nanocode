@@ -1,5 +1,7 @@
 import sys
 
+from langfuse import get_client
+
 from agent.agent import NanoCodeAgent
 from models.config import AgentConfig
 
@@ -16,10 +18,13 @@ def main():
         config=AgentConfig()
     )
 
-    response = agent.run(task)
+    try:
+        response = agent.run(task)
 
-    print("\n--- FINAL RESPONSE ---")
-    print(response)
+        print("\n--- FINAL RESPONSE ---")
+        print(response)
+    finally:
+        get_client().flush()
 
 
 if __name__ == "__main__":
