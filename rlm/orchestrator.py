@@ -44,7 +44,12 @@ class RLMOrchestrator:
         decomposer: RLMDecomposer | None = None,
         synthesizer: RLMSynthesizer | None = None,
         agent_factory: Callable[[], Any] | None = None,
+        tracer: Any | None = None,
     ) -> None:
+
+        # The parent's tracer, so RLM and child events reach whatever the
+        # caller already renders with. None means nobody is listening.
+        self.tracer = tracer
 
         self.runtime = runtime
         self.decomposer = decomposer or DeterministicRLMDecomposer()
@@ -60,6 +65,26 @@ class RLMOrchestrator:
 
         self.last_result: RLMResult | None = None
         self.last_child_tasks: list[RLMChildTask] = []
+
+    def _record(self, name: str, **data: Any) -> None:
+        """Record an RLM-level event on the parent tracer, if there is one."""
+
+        if self.tracer is None:
+            return
+
+        self.tracer.record(name, component="rlm", **data)
+
+    def _forward_child_events(self, runtime: RLMRuntime, child_count: int) -> None:
+        """Ask the runtime's handler to replay child events to the parent."""
+
+        handler = getattr(runtime, "call_handler", None)
+
+        setter = getattr(handler, "set_event_forwarding", None)
+
+        if setter is None:
+            return
+
+        setter(tracer=self.tracer, child_count=child_count)
 
     def _create_runtime(self, child_count: int) -> RLMRuntime:
         """Create a runtime with a budget sized for one user request."""
@@ -111,9 +136,17 @@ class RLMOrchestrator:
 
         context = RLMContext(task=task)
 
+        self._record("rlm.started", task=task)
+
         child_tasks = self._decompose(context)
 
         self.last_child_tasks = list(child_tasks)
+
+        self._record(
+            "rlm.decomposition.completed",
+            task=task,
+            children=len(child_tasks),
+        )
 
         if not child_tasks:
             # Nothing to run. Fail through the existing synthesis contract
@@ -132,6 +165,8 @@ class RLMOrchestrator:
             else self._create_runtime(len(child_tasks))
         )
 
+        self._forward_child_events(runtime, len(child_tasks))
+
         result = runtime.call_and_synthesize(
             parent=context,
             tasks=child_tasks,
@@ -139,6 +174,18 @@ class RLMOrchestrator:
         )
 
         self.last_result = result
+
+        metadata = result.metadata or {}
+
+        self._record(
+            "rlm.synthesis.completed",
+            task=task,
+            success=result.success,
+            successful_children=metadata.get(SUCCESSFUL_KEY, 0),
+            failed_children=metadata.get(FAILED_KEY, 0),
+            rate_limited_children=metadata.get(RATE_LIMITED_KEY, 0),
+            partial=bool(metadata.get(PARTIAL_KEY)),
+        )
 
         return self._to_answer(result, task)
 

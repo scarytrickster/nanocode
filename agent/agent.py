@@ -11,11 +11,21 @@ from tools import get_all_tools
 from tools.base import Tool
 
 from agent.executor import Executor
-from agent.state import AgentState, AgentStatus,get_system_prompt
+from agent.state import (
+    AgentState,
+    AgentStatus,
+    ensure_system_message,
+    get_system_prompt,
+    system_message,
+    user_message,
+)
 from agent.planner import Planner
 from agent.evaluator import Evaluator
 from agent.memory import Experience, Memory
 from collections.abc import Callable
+from langfuse import get_client
+
+from rlm.router import STRATEGY_RLM, RLMRouter, RouteDecision
 
 
 # @dataclass
@@ -48,6 +58,9 @@ class NanoCodeAgent:
         messages: list[dict[str, Any]] | None = None,
         console_trace: bool = True,
         trace_callback: Callable[[Any], None] | None = None,
+        router: RLMRouter | None = None,
+        rlm_orchestrator: Any | None = None,
+        rlm_enabled: bool = True,
     ) -> None:
 
         self.tools = tools if tools is not None else get_all_tools()
@@ -59,6 +72,8 @@ class NanoCodeAgent:
             console=console_trace,
             on_event=trace_callback,
         )
+
+        self.langfuse = get_client()
         # Executor shares the tracer
         self.executor = (
             executor
@@ -82,27 +97,35 @@ class NanoCodeAgent:
         )
 
         self.memory = Memory()
+
+        # Routing layer. Child agents spawned by the RLM path are created with
+        # rlm_enabled=False so a child can never route into RLM again.
+        self.rlm_enabled = rlm_enabled
+
+        self.router = (
+            router
+            if router is not None
+            else (RLMRouter() if rlm_enabled else None)
+        )
+
+        self.rlm_orchestrator = rlm_orchestrator
+
+        self.last_route_decision: RouteDecision | None = None
     
+        # A supplied history is normalized, never trusted, so NanoCode's own
+        # system instruction always leads the conversation.
         self.messages = (
-            messages
+            ensure_system_message(messages)
             if messages is not None
-            else [
-                {
-                    "role": "system",
-                    "content": get_system_prompt(),
-                }
-            ]
+            else [system_message()]
         )
 
     def create_state(self, task: str) -> AgentState:
         """Create an AgentState for a user task."""
 
-        self.messages.append(
-            {
-                "role": "user",
-                "content": task,
-            }
-        )
+        # The task is appended as user content. It is never merged into, or
+        # allowed to replace, the system instruction.
+        self.messages.append(user_message(task))
 
         return AgentState(
             task=task,
@@ -111,124 +134,206 @@ class NanoCodeAgent:
             config=self.config,
         )
 
-    def run(self, task: str) -> str:
-        """Run a task with evaluation-driven retries."""
+    def _get_rlm_orchestrator(self) -> Any:
+        """Return the RLM orchestrator, creating the default one on demand."""
 
-        state = self.create_state(task)
+        if self.rlm_orchestrator is None:
+            # Imported lazily: the orchestrator imports NanoCodeAgent.
+            from rlm.orchestrator import RLMOrchestrator
 
-        # Retrieve relevant previous experiences once.
-        experiences = self.memory.retrieve(task)
+            # The shared tracer goes down with it, so child agent events
+            # surface through the same callback the CLI already listens to.
+            self.rlm_orchestrator = RLMOrchestrator(tracer=self.tracer)
+
+        return self.rlm_orchestrator
+
+    def _route(self, task: str) -> RouteDecision | None:
+        """Decide which execution path handles this task."""
+
+        if self.router is None:
+            return None
+
+        decision = self.router.decide(task)
+
+        self.last_route_decision = decision
+
+        with self.langfuse.start_as_current_observation(
+            as_type="span",
+            name="routing-decision",
+            input={
+                "task": task,
+            },
+        ) as span:
+
+            span.update(
+                output={
+                    "task": task,
+                    "strategy": decision.strategy,
+                    "reason": decision.reason,
+                    "score": decision.score,
+                    "signals": decision.signals,
+                }
+            )
 
         self.tracer.record(
-            "memory.retrieved",
-            component="memory",
+            "routing.decided",
+            component="router",
             task=task,
-            matches=len(experiences),
+            strategy=decision.strategy,
+            score=decision.score,
+            reason=decision.reason,
         )
 
-        retry_context: dict[str, str] | None = None
-        last_reflection = None
+        return decision
 
-        while True:
+    def run(self, task: str) -> str:
+        """Route a task, then run either the NanoCode pipeline or the RLM path."""
 
-            # Plan using memory + optional retry context.
-            self.planner.run(
-                state,
-                experiences=experiences,
-                retry_context=retry_context,
-            )
+        langfuse = self.langfuse
 
-            # Execute the current attempt.
-            self.executor.run(state)
+        try:
+            with langfuse.start_as_current_observation(
+                as_type="span",
+                name="nanocode-run",
+                input={
+                    "task": task,
+                },
+            ) as trace:
 
-            # Human explicitly rejected an action.
-            # This is NOT a failed attempt.
-            # Do not evaluate, reflect, retry, or store memory.
-            if state.status == AgentStatus.HUMAN_REJECTED:
-                self.tracer.record(
-                    "agent.stopped",
-                    component="agent",
-                    reason="human_rejected",
-                )
-    
-                return state.final_response
+                decision = self._route(task)
 
-            # Evaluate the attempt.
-            evaluation = self.evaluator.evaluate(state)
+                if decision is not None and decision.strategy == STRATEGY_RLM:
 
-            # Always reflect after evaluation.
-            reflection = self.reflector.reflect(
-                state,
-                evaluation,
-            )
+                    answer = self._get_rlm_orchestrator().run(task)
 
-            last_reflection = reflection
-
-            # Successful execution → stop immediately.
-            if evaluation.success:
-                if state.retry_count > 0:
-                    self.tracer.record(
-                        "retry.completed",
-                        component="agent",
-                        attempt=state.retry_count,
-                        status="success",
+                    trace.update(
+                        output={
+                            "answer": answer,
+                            "status": "completed",
+                            "strategy": STRATEGY_RLM,
+                        }
                     )
 
-                break
+                    return answer
 
-            # Check retry limit.
-            if state.retry_count >= state.config.max_retries:
+                state = self.create_state(task)
+
+                experiences = self.memory.retrieve(task)
+
                 self.tracer.record(
-                    "retry.exhausted",
-                    component="agent",
-                    attempts=state.retry_count,
+                    "memory.retrieved",
+                    component="memory",
+                    task=task,
+                    matches=len(experiences),
                 )
-                break
 
-            # Reflection must provide an improvement before retrying.
-            if not reflection.should_improve:
-                break
+                retry_context: dict[str, str] | None = None
+                last_reflection = None
 
-            # Build context for the next planning attempt.
-            retry_context = {
-                "diagnosis": reflection.diagnosis,
-                "improvement": reflection.improvement,
-            }
+                while True:
 
-            state.retry_count += 1
+                    self.planner.run(
+                        state,
+                        experiences=experiences,
+                        retry_context=retry_context,
+                    )
 
-            self.tracer.record(
-                "retry.started",
-                component="agent",
-                attempt=state.retry_count,
-                reason="evaluation_failed",
-            )
+                    self.executor.run(state)
 
+                    if state.status == AgentStatus.HUMAN_REJECTED:
+                        self.tracer.record(
+                            "agent.stopped",
+                            component="agent",
+                            reason="human_rejected",
+                        )
 
-        # Store one experience only after the final attempt.
-        if (
-            not evaluation.success
-            and last_reflection is not None
-            and last_reflection.should_improve
-        ):
-            experience = Experience(
-                task=state.task,
-                diagnosis=last_reflection.diagnosis,
-                improvement=last_reflection.improvement,
-                success=False,
-            )
-    
-            self.memory.add(experience)
-    
-            self.tracer.record(
-                "memory.stored",
-                component="memory",
-                task=state.task,
-                success=False,
-            )
+                        trace.update(
+                            output={
+                                "answer": state.final_response,
+                                "status": "human_rejected",
+                            }
+                        )
 
-        return state.final_response
+                        return state.final_response
 
+                    evaluation = self.evaluator.evaluate(state)
+
+                    reflection = self.reflector.reflect(
+                        state,
+                        evaluation,
+                    )
+
+                    last_reflection = reflection
+
+                    if evaluation.success:
+                        if state.retry_count > 0:
+                            self.tracer.record(
+                                "retry.completed",
+                                component="agent",
+                                attempt=state.retry_count,
+                                status="success",
+                            )
+
+                        break
+
+                    if state.retry_count >= state.config.max_retries:
+                        self.tracer.record(
+                            "retry.exhausted",
+                            component="agent",
+                            attempts=state.retry_count,
+                        )
+                        break
+
+                    if not reflection.should_improve:
+                        break
+
+                    retry_context = {
+                        "diagnosis": reflection.diagnosis,
+                        "improvement": reflection.improvement,
+                    }
+
+                    state.retry_count += 1
+
+                    self.tracer.record(
+                        "retry.started",
+                        component="agent",
+                        attempt=state.retry_count,
+                        reason="evaluation_failed",
+                    )
+
+                if (
+                    not evaluation.success
+                    and last_reflection is not None
+                    and last_reflection.should_improve
+                ):
+                    experience = Experience(
+                        task=state.task,
+                        diagnosis=last_reflection.diagnosis,
+                        improvement=last_reflection.improvement,
+                        success=False,
+                    )
+
+                    self.memory.add(experience)
+
+                    self.tracer.record(
+                        "memory.stored",
+                        component="memory",
+                        task=state.task,
+                        success=False,
+                    )
+
+                trace.update(
+                    output={
+                        "answer": state.final_response,
+                        "status": state.status,
+                        "success": evaluation.success,
+                    }
+                )
+
+                return state.final_response
+
+        finally:
+            langfuse.flush()
 
 
 def run_agent(

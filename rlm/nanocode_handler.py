@@ -85,10 +85,104 @@ class NanoCodeCallHandler(RLMCallHandler):
         self.rate_limit_delay = rate_limit_delay
         self.sleep = sleep
 
+        # Event forwarding. A child agent has its own Tracer, which by default
+        # nobody is listening to, so everything the child did was invisible
+        # outside Langfuse. When a parent tracer is attached, the child's real
+        # events are replayed into it and reach whatever the parent already
+        # renders with.
+        self.event_tracer: Any | None = None
+        self.child_count: int = 0
+        self.children_started: int = 0
+
+    def set_event_forwarding(
+        self,
+        tracer: Any | None,
+        child_count: int = 0,
+    ) -> None:
+        """Forward child agent events into `tracer` (the parent's)."""
+
+        self.event_tracer = tracer
+        self.child_count = child_count
+        self.children_started = 0
+
+    def _forward(
+        self,
+        event: Any,
+        child_index: int,
+        task: str,
+        depth: int,
+    ) -> None:
+        """Replay one real child event into the parent tracer.
+
+        Nothing is invented here: the name, component, timing and payload are
+        the child's own. Only the child's identity is added.
+        """
+
+        tracer = self.event_tracer
+
+        if tracer is None:
+            return
+
+        data = dict(getattr(event, "data", {}) or {})
+
+        data.update(
+            {
+                "rlm_child": child_index,
+                "rlm_child_count": self.child_count,
+                "rlm_child_task": task,
+                "depth": depth,
+            }
+        )
+
+        tracer.record(
+            getattr(event, "name", "event"),
+            component=getattr(event, "component", "agent"),
+            duration_ms=getattr(event, "duration_ms", None),
+            error=getattr(event, "error", None),
+            **data,
+        )
+
+    def _attach_event_forwarding(
+        self,
+        agent: Any,
+        child_index: int,
+        context: RLMContext,
+    ) -> None:
+        """Listen to a child agent's tracer, if it has one."""
+
+        if self.event_tracer is None:
+            return
+
+        tracer = getattr(agent, "tracer", None)
+
+        if tracer is None:
+            return
+
+        tracer.on_event = lambda event: self._forward(
+            event,
+            child_index=child_index,
+            task=context.task,
+            depth=context.depth,
+        )
+
+    def _record(self, name: str, **data: Any) -> None:
+        """Record an RLM-level event on the parent tracer."""
+
+        if self.event_tracer is None:
+            return
+
+        self.event_tracer.record(name, component="rlm", **data)
+
     def call(self, context: RLMContext) -> RLMResult:
         """Execute a child task using NanoCodeAgent."""
 
+        self.children_started += 1
+
+        child_index = self.children_started
+
         agent = self.agent_factory()
+
+        self._attach_event_forwarding(agent, child_index, context)
 
         request = NanoCodeRequest(
             task=context.task,
@@ -98,6 +192,14 @@ class NanoCodeCallHandler(RLMCallHandler):
         )
 
         self.last_request = request
+
+        self._record(
+            "rlm.child.started",
+            child=child_index,
+            of=self.child_count,
+            task=context.task,
+            depth=context.depth,
+        )
 
         attempts = 0
 
@@ -119,26 +221,53 @@ class NanoCodeCallHandler(RLMCallHandler):
                     # would fail again identically and just burn budget.
                     self.sleep(self.rate_limit_delay)
 
+                    self._record(
+                        "rlm.child.retrying",
+                        child=child_index,
+                        of=self.child_count,
+                        attempt=attempts,
+                    )
+
                     # A fresh agent per attempt keeps attempts isolated, the
                     # same way each child gets its own agent.
                     agent = self.agent_factory()
+
+                    self._attach_event_forwarding(agent, child_index, context)
 
                     continue
 
                 # One child failing must not abort its siblings or corrupt the
                 # parent context. It becomes an unsuccessful result, which is
                 # the failure shape RLMSynthesizer already knows how to handle.
+                self._record(
+                    "rlm.child.failed",
+                    child=child_index,
+                    of=self.child_count,
+                    error=str(error),
+                    error_type=classify_error(error),
+                    attempts=attempts,
+                )
+
                 return self._to_failure(
                     context=context,
                     error=error,
                     attempts=attempts,
                 )
 
-            return self._to_rlm_result(
+            result = self._to_rlm_result(
                 context=context,
                 response=response,
                 attempts=attempts,
             )
+
+            self._record(
+                "rlm.child.completed" if result.success else "rlm.child.failed",
+                child=child_index,
+                of=self.child_count,
+                attempts=attempts,
+            )
+
+            return result
 
     def _to_failure(
         self,
