@@ -1,8 +1,8 @@
 
 
 from tools.base import Tool
+from tools.ignore import iter_files
 from typing import Any
-import os
 import re
 
 class GrepTool(Tool):
@@ -29,15 +29,15 @@ class GrepTool(Tool):
         matches = []
         search_path = args.get("path", ".")
         
-        for dirpath, _, filenames in os.walk(search_path):
-            for filename in filenames:
-                filepath = os.path.join(dirpath, filename)
-                try:
-                    with open(filepath, encoding="utf-8") as f:
-                        for lineno, line in enumerate(f, 1):
-                            if regex.search(line):
-                                matches.append(f"{filepath}:{lineno}: {line.rstrip()}")
-                except (UnicodeDecodeError, OSError):
-                    continue
+        # iter_files prunes dependency/generated directories so recursive
+        # exploration cannot pull an entire .venv into the context.
+        for filepath in iter_files(search_path):
+            try:
+                with open(filepath, encoding="utf-8") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if regex.search(line):
+                            matches.append(f"{filepath}:{lineno}: {line.rstrip()}")
+            except (UnicodeDecodeError, OSError):
+                continue
         
         return "\n".join(matches) if matches else "No matches found."
