@@ -1,4 +1,5 @@
 from tools.base import Tool
+from tools.output_limit import limit_tool_output
 from typing import Any
 
 
@@ -19,7 +20,9 @@ class ReadFileTool(Tool):
     def execute(self, args: dict[str, Any]) -> str:
         try:
             with open(args["path"], encoding="utf-8") as f:
-                return f.read()
+                # Reading any file stays allowed; only the amount handed
+                # back to the model is bounded.
+                return limit_tool_output(f.read())
         except FileNotFoundError:
             return f"Error: File not found: {args['path']}"
         except PermissionError:

@@ -2,6 +2,7 @@
 
 
 from tools.base import Tool
+from tools.output_limit import limit_tool_output
 import subprocess   
 from typing import Any
 
@@ -28,7 +29,9 @@ class BashTool(Tool):
                 text=True,
                 timeout=30
             )
-            return result.stdout + result.stderr
+            # A command like `find /` can emit megabytes; bound it before
+            # it reaches the model's context.
+            return limit_tool_output(result.stdout + result.stderr)
         except subprocess.TimeoutExpired:
             return "Error: Command timed out after 30 seconds"
         except Exception as e:

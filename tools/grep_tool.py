@@ -2,6 +2,7 @@
 
 from tools.base import Tool
 from tools.ignore import iter_files
+from tools.output_limit import limit_tool_output
 from typing import Any
 import re
 
@@ -40,4 +41,9 @@ class GrepTool(Tool):
             except (UnicodeDecodeError, OSError):
                 continue
         
-        return "\n".join(matches) if matches else "No matches found."
+        if not matches:
+            return "No matches found."
+
+        # Traversal filtering keeps dependency trees out; output limiting
+        # keeps a legitimate but huge match set from flooding the context.
+        return limit_tool_output("\n".join(matches))
