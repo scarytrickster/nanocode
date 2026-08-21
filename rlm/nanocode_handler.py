@@ -21,10 +21,14 @@ class NanoCodeRequest:
 def create_nanocode_agent() -> NanoCodeAgent:
     """
     Create a fresh NanoCodeAgent for an RLM child execution.
+
+    Children run the normal NanoCode pipeline: rlm_enabled=False stops a child
+    from routing back into the RLM path.
     """
 
     return NanoCodeAgent(
             console_trace=False,
+            rlm_enabled=False,
     )
 
 
@@ -56,8 +60,20 @@ class NanoCodeCallHandler(RLMCallHandler):
         )
 
         self.last_request = request
-        # NanoCodeAgent.run() currently accepts a string task.
-        response = agent.run(request.task)
+
+        try:
+            # NanoCodeAgent.run() currently accepts a string task.
+            response = agent.run(request.task)
+        except Exception as error:
+            # One child crashing must not abort its siblings or corrupt the
+            # parent context. It becomes an unsuccessful result, which is the
+            # failure shape RLMSynthesizer already knows how to ignore.
+            return RLMResult(
+                answer="",
+                success=False,
+                depth=context.depth,
+                metadata={"error": str(error)},
+            )
 
         return self._to_rlm_result(
             context=context,
