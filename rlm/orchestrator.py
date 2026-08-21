@@ -11,6 +11,11 @@ from rlm.decomposer import (
     RLMChildTask,
     RLMDecomposer,
 )
+from rlm.llm_decomposer import (
+    STRATEGY_DETERMINISTIC,
+    STRATEGY_LLM,
+    LLMRLMDecomposer,
+)
 from rlm.nanocode_handler import NanoCodeCallHandler, create_nanocode_agent
 from rlm.result import RLMResult
 from rlm.runtime import DEFAULT_MAX_CONCURRENCY, RLMRuntime
@@ -33,6 +38,12 @@ from rlm.synthesizer import (
 # limits; a decomposer may propose more candidates than this.
 DEFAULT_MAX_CHILDREN = RLMBudget().max_children
 
+# Decomposition strategy. Deterministic stays the default: it needs no model
+# call, so the offline test suites and the benchmark keep working unchanged,
+# and enabling LLM decomposition is an explicit decision rather than a
+# side effect of this class existing.
+DEFAULT_DECOMPOSITION_STRATEGY = STRATEGY_DETERMINISTIC
+
 
 class RLMOrchestrator:
     """
@@ -52,6 +63,7 @@ class RLMOrchestrator:
         agent_factory: Callable[[], Any] | None = None,
         tracer: Any | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        decomposition_strategy: str = DEFAULT_DECOMPOSITION_STRATEGY,
     ) -> None:
 
         # The parent's tracer, so RLM and child events reach whatever the
@@ -63,7 +75,21 @@ class RLMOrchestrator:
         self.max_concurrency = max_concurrency
 
         self.runtime = runtime
-        self.decomposer = decomposer or DeterministicRLMDecomposer()
+
+        # An explicitly supplied decomposer always wins; otherwise the
+        # strategy decides. Both satisfy the same interface, so nothing below
+        # decomposition can tell the difference.
+        self.decomposer = decomposer or self._build_decomposer(
+            decomposition_strategy
+        )
+
+        # The label reported in traces describes the decomposer actually in
+        # use, so an injected one is not mislabelled.
+        self.decomposition_strategy = (
+            STRATEGY_LLM
+            if isinstance(self.decomposer, LLMRLMDecomposer)
+            else decomposition_strategy
+        )
         self.synthesizer = synthesizer or RLMSynthesizer()
 
         self.agent_factory = (
@@ -76,6 +102,15 @@ class RLMOrchestrator:
 
         self.last_result: RLMResult | None = None
         self.last_child_tasks: list[RLMChildTask] = []
+
+    @staticmethod
+    def _build_decomposer(strategy: str) -> RLMDecomposer:
+        """The decomposer for a strategy name."""
+
+        if strategy == STRATEGY_LLM:
+            return LLMRLMDecomposer()
+
+        return DeterministicRLMDecomposer()
 
     def _record(self, name: str, **data: Any) -> None:
         """Record an RLM-level event on the parent tracer, if there is one."""
@@ -117,6 +152,12 @@ class RLMOrchestrator:
     def _decompose(self, context: RLMContext) -> list[RLMChildTask]:
         """Decompose the parent task, recorded as a span under the RLM trace."""
 
+        self._record(
+            "rlm.decomposition.started",
+            task=context.task,
+            strategy=self.decomposition_strategy,
+        )
+
         with self.langfuse.start_as_current_observation(
             as_type="span",
             name="rlm-decomposition",
@@ -130,6 +171,8 @@ class RLMOrchestrator:
                 )
             )
 
+            self._record_decomposition_outcome(len(children))
+
             span.update(
                 output={
                     "child_count": len(children),
@@ -138,6 +181,39 @@ class RLMOrchestrator:
             )
 
             return children
+
+    def _record_decomposition_outcome(self, child_count: int) -> None:
+        """Trace how decomposition went, in counts and flags only.
+
+        Never the prompt, the response, or any rationale text.
+        """
+
+        outcome = getattr(self.decomposer, "last_outcome", None)
+
+        if outcome is None:
+            return
+
+        if outcome.fallback_used:
+            self._record(
+                "rlm.decomposition.fallback",
+                strategy=outcome.strategy,
+                reason=outcome.fallback_reason,
+                child_count=outcome.child_count,
+                validation_failures=outcome.validation_failures,
+            )
+
+            return
+
+        self._record(
+            "rlm.decomposition.succeeded",
+            strategy=outcome.strategy,
+            child_count=outcome.child_count,
+            proposed_count=outcome.proposed_count,
+            validation_failures=outcome.validation_failures,
+            model=outcome.model,
+            prompt_chars=outcome.prompt_chars,
+            response_chars=outcome.response_chars,
+        )
 
     def run(self, task: str) -> str:
         """

@@ -26,6 +26,10 @@ CHILD_COMPLETED = "rlm.child.completed"
 CHILD_FAILED = "rlm.child.failed"
 CHILD_RETRYING = "rlm.child.retrying"
 
+DECOMPOSITION_STARTED = "rlm.decomposition.started"
+DECOMPOSITION_SUCCEEDED = "rlm.decomposition.succeeded"
+DECOMPOSITION_FALLBACK = "rlm.decomposition.fallback"
+
 RETRY_STARTED = "retry.started"
 RETRY_EXHAUSTED = "retry.exhausted"
 RSI_STARTED = "rsi.started"
@@ -61,6 +65,11 @@ class ExecutionMetrics:
     max_concurrency: int = 1
     peak_active_children: int = 0
 
+    decomposition_strategy: str = ""
+    decomposition_llm_calls: int = 0
+    decomposition_fallback: bool = False
+    decomposition_validation_failures: int = 0
+
     duration_seconds: float = 0.0
     tokens: str = TOKENS_UNAVAILABLE
 
@@ -85,6 +94,12 @@ class ExecutionMetrics:
             "child_retries": self.child_retries,
             "max_concurrency": self.max_concurrency,
             "peak_active_children": self.peak_active_children,
+            "decomposition_strategy": self.decomposition_strategy,
+            "decomposition_llm_calls": self.decomposition_llm_calls,
+            "decomposition_fallback": self.decomposition_fallback,
+            "decomposition_validation_failures": (
+                self.decomposition_validation_failures
+            ),
             "failures": list(self.failures),
             "duration_seconds": self.duration_seconds,
             "tokens": self.tokens,
@@ -133,6 +148,34 @@ def collect_metrics(events, duration_seconds: float = 0.0) -> ExecutionMetrics:
 
         elif name == CHILD_RETRYING:
             metrics.child_retries += 1
+
+        elif name == DECOMPOSITION_STARTED:
+            metrics.decomposition_strategy = str(
+                event.data.get("strategy", "")
+            )
+
+        elif name == DECOMPOSITION_SUCCEEDED:
+            metrics.decomposition_strategy = str(
+                event.data.get("strategy", metrics.decomposition_strategy)
+            )
+            metrics.decomposition_validation_failures = int(
+                event.data.get("validation_failures", 0)
+            )
+
+            # An LLM decomposition costs exactly one model request; a
+            # deterministic one costs none.
+            if event.data.get("strategy") == "llm":
+                metrics.decomposition_llm_calls = 1
+
+        elif name == DECOMPOSITION_FALLBACK:
+            metrics.decomposition_fallback = True
+            metrics.decomposition_strategy = "deterministic (fallback)"
+            metrics.decomposition_validation_failures = int(
+                event.data.get("validation_failures", 0)
+            )
+
+            # The attempt was made and paid for before it failed.
+            metrics.decomposition_llm_calls = 1
 
         elif name == RETRY_STARTED:
             metrics.attempts += 1

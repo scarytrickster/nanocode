@@ -48,6 +48,17 @@ class TerminalRenderer:
         if event.name == "rlm.started":
             self.print_info("RLM: analyzing from multiple perspectives...")
 
+        elif event.name == "rlm.decomposition.started":
+            strategy = event.data.get("strategy", "deterministic")
+            self.print_info(f"RLM: decomposing task ({strategy})...")
+
+        elif event.name == "rlm.decomposition.fallback":
+            reason = event.data.get("reason", "")
+            self.print_error(
+                f"RLM: LLM decomposition unavailable; using deterministic "
+                f"fallback ({reason})"
+            )
+
         elif event.name == "rlm.decomposition.completed":
             children = event.data.get("children", 0)
             self.print_info(f"RLM: decomposed into {children} child tasks")

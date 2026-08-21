@@ -53,6 +53,16 @@ def render_result(result: BenchmarkResult) -> str:
         _row("Attempts", normal.metrics.attempts, rlm.metrics.attempts),
         _row("Children", normal.metrics.children, rlm.metrics.children),
         _row(
+            "Decomposition",
+            "-",
+            rlm.metrics.decomposition_strategy or "-",
+        ),
+        _row(
+            "Decomp LLM calls",
+            "-",
+            rlm.metrics.decomposition_llm_calls,
+        ),
+        _row(
             "Max concurrency",
             normal.metrics.max_concurrency,
             rlm.metrics.max_concurrency,
