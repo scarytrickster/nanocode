@@ -14,7 +14,13 @@ from rlm.decomposer import (
 from rlm.nanocode_handler import NanoCodeCallHandler, create_nanocode_agent
 from rlm.result import RLMResult
 from rlm.runtime import RLMRuntime
-from rlm.synthesizer import RLMSynthesizer
+from rlm.synthesizer import (
+    FAILED_KEY,
+    PARTIAL_KEY,
+    RATE_LIMITED_KEY,
+    RLMSynthesizer,
+    SUCCESSFUL_KEY,
+)
 
 # Upper bound on the children the default runtime is willing to run, mirroring
 # RLMBudget's own default. The runtime stays the authority on execution
@@ -137,15 +143,68 @@ class RLMOrchestrator:
         return self._to_answer(result, task)
 
     def _to_answer(self, result: RLMResult, task: str) -> str:
-        """Convert an RLMResult into the string NanoCode callers expect."""
+        """Convert an RLMResult into the string NanoCode callers expect.
+
+        The RLMResult.answer stays exactly what the synthesizer produced; the
+        completeness notice is added here, on the user-facing string, so a
+        partial investigation can never read as a complete one.
+        """
 
         if result is None:
             return ""
 
         if result.answer:
-            return str(result.answer)
+            notice = self._completeness_notice(result)
+
+            return f"{notice}{result.answer}" if notice else str(result.answer)
 
         if result.success:
             return ""
+
+        return self._failure_answer(result, task)
+
+    def _completeness_notice(self, result: RLMResult) -> str:
+        """A short header stating how much of the investigation completed."""
+
+        metadata = result.metadata or {}
+
+        if not metadata.get(PARTIAL_KEY):
+            return ""
+
+        successful = metadata.get(SUCCESSFUL_KEY, 0)
+        total = successful + metadata.get(FAILED_KEY, 0)
+        rate_limited = metadata.get(RATE_LIMITED_KEY, 0)
+
+        lines = [
+            "Partial investigation: "
+            f"{successful} of {total} child analyses completed successfully."
+        ]
+
+        if rate_limited:
+            lines.append(
+                f"{rate_limited} child "
+                f"{'analysis was' if rate_limited == 1 else 'analyses were'} "
+                "rate-limited by the model provider."
+            )
+
+        lines.append("")
+
+        return "\n".join(lines) + "\n"
+
+    def _failure_answer(self, result: RLMResult, task: str) -> str:
+        """The message returned when no child produced an answer."""
+
+        metadata = result.metadata or {}
+
+        rate_limited = metadata.get(RATE_LIMITED_KEY, 0)
+
+        if rate_limited:
+            failed = metadata.get(FAILED_KEY, rate_limited)
+
+            return (
+                f"RLM execution produced no answer for task: {task} "
+                f"({rate_limited} of {failed} child analyses were "
+                "rate-limited by the model provider; try again shortly)."
+            )
 
         return f"RLM execution produced no answer for task: {task}"

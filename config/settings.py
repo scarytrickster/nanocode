@@ -23,9 +23,17 @@ MAX_WEB_CONTENT_LENGTH = 5000
 # is attempted.
 MISSING_API_KEY = "missing-openrouter-api-key"
 
+# The SDK retries 429s twice by default, so one application-level request
+# became three HTTP attempts against an already rate-limited shared pool --
+# retrying is exactly the wrong reflex there, and it was invisible to the
+# tracer. Retries are owned by the application instead (see
+# rlm/nanocode_handler.py), so there is one retry owner rather than two.
+SDK_MAX_RETRIES = 0
+
 client = openai.OpenAI(
     base_url=BASE_URL,
     api_key=API_KEY or MISSING_API_KEY,
+    max_retries=SDK_MAX_RETRIES,
 )
 
 
