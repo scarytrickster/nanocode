@@ -28,7 +28,7 @@ from rlm.budget import RLMBudget
 from rlm.nanocode_handler import NanoCodeCallHandler
 from rlm.orchestrator import RLMOrchestrator
 from rlm.router import STRATEGY_NORMAL, STRATEGY_RLM, RLMRouter, RouteDecision
-from rlm.runtime import RLMRuntime
+from rlm.runtime import DEFAULT_MAX_CONCURRENCY, RLMRuntime
 from rlm.synthesizer import (
     CONFIDENCE_KEY,
     CONFIRMED_COUNT_KEY,
@@ -180,6 +180,7 @@ def _run(
     project: str,
     strategy: str,
     clock: Callable[[], float] = perf_counter,
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> PathResult:
     """Execute one task down one path and measure it."""
 
@@ -208,6 +209,7 @@ def _run(
                         max_children=4,
                         max_iterations=8,
                     ),
+                    max_concurrency=max_concurrency,
                 ),
                 tracer=agent.tracer,
             )
@@ -224,6 +226,14 @@ def _run(
         duration = max(0.0, clock() - started)
 
     metrics = collect_metrics(events, duration_seconds=duration)
+
+    runtime = getattr(agent.rlm_orchestrator, "runtime", None)
+
+    if strategy == STRATEGY_RLM and runtime is not None:
+        # Configured limit and what actually overlapped, straight from the
+        # runtime's own counters.
+        metrics.max_concurrency = runtime.max_concurrency
+        metrics.peak_active_children = runtime.peak_active_children
 
     evidence = EvidenceMetrics()
 
@@ -260,6 +270,7 @@ def run_task(
     task: BenchmarkTask,
     root: str,
     clock: Callable[[], float] = perf_counter,
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> BenchmarkResult:
     """Run one benchmark task down both paths against a fresh fixture."""
 
@@ -272,7 +283,7 @@ def run_task(
     return BenchmarkResult(
         task=task,
         normal=_run(task, project, STRATEGY_NORMAL, clock),
-        rlm=_run(task, project, STRATEGY_RLM, clock),
+        rlm=_run(task, project, STRATEGY_RLM, clock, max_concurrency),
         router_strategy=decision.strategy,
         router_reason=decision.reason,
     )
@@ -282,10 +293,11 @@ def run_benchmark(
     tasks,
     root: str,
     clock: Callable[[], float] = perf_counter,
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> list[BenchmarkResult]:
     """Run every task. Failures are recorded, never skipped."""
 
-    return [run_task(task, root, clock) for task in tasks]
+    return [run_task(task, root, clock, max_concurrency) for task in tasks]
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +344,9 @@ def aggregate(results: list[BenchmarkResult]) -> dict:
             "average_llm_calls": _mean(run.metrics.llm_calls for run in runs),
             "average_tool_calls": _mean(run.metrics.tool_calls for run in runs),
             "average_children": _mean(run.metrics.children for run in runs),
+            "peak_active_children": max(
+                (run.metrics.peak_active_children for run in runs), default=0
+            ),
             "average_attempts": _mean(run.metrics.attempts for run in runs),
             "average_findings": _mean(
                 run.evidence.findings_count for run in runs

@@ -13,7 +13,7 @@ from rlm.decomposer import (
 )
 from rlm.nanocode_handler import NanoCodeCallHandler, create_nanocode_agent
 from rlm.result import RLMResult
-from rlm.runtime import RLMRuntime
+from rlm.runtime import DEFAULT_MAX_CONCURRENCY, RLMRuntime
 from rlm.synthesizer import (
     CONFIDENCE_KEY,
     CONFIRMED_COUNT_KEY,
@@ -51,11 +51,16 @@ class RLMOrchestrator:
         synthesizer: RLMSynthesizer | None = None,
         agent_factory: Callable[[], Any] | None = None,
         tracer: Any | None = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> None:
 
         # The parent's tracer, so RLM and child events reach whatever the
         # caller already renders with. None means nobody is listening.
         self.tracer = tracer
+
+        # Applies only to the default runtime; an injected runtime keeps its
+        # own concurrency setting.
+        self.max_concurrency = max_concurrency
 
         self.runtime = runtime
         self.decomposer = decomposer or DeterministicRLMDecomposer()
@@ -106,6 +111,7 @@ class RLMOrchestrator:
                 max_children=max_children,
                 max_iterations=max_children + 1,
             ),
+            max_concurrency=self.max_concurrency,
         )
 
     def _decompose(self, context: RLMContext) -> list[RLMChildTask]:

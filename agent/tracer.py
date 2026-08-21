@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from threading import RLock
 from time import perf_counter
 from typing import Any
 from collections.abc import Callable, Iterator
@@ -35,6 +36,12 @@ class Tracer:
         self.on_event = on_event
         self.events: list[TraceEvent] = []
 
+        # RLM children run concurrently and forward their events here, so one
+        # event is delivered at a time. Callbacks and the console writer are
+        # not written to be re-entrant, and interleaved half-lines would be
+        # unreadable.
+        self._lock = RLock()
+
     def record(
         self,
         name: str,
@@ -57,13 +64,14 @@ class Tracer:
             error=error,
         )
 
-        self.events.append(event)
+        with self._lock:
+            self.events.append(event)
 
-        if self.on_event is not None:
-            self.on_event(event)
+            if self.on_event is not None:
+                self.on_event(event)
 
-        if self.console:
-            self._print_event(event)
+            if self.console:
+                self._print_event(event)
 
     @contextmanager
     def span(

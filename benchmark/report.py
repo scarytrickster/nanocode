@@ -53,6 +53,16 @@ def render_result(result: BenchmarkResult) -> str:
         _row("Attempts", normal.metrics.attempts, rlm.metrics.attempts),
         _row("Children", normal.metrics.children, rlm.metrics.children),
         _row(
+            "Max concurrency",
+            normal.metrics.max_concurrency,
+            rlm.metrics.max_concurrency,
+        ),
+        _row(
+            "Peak concurrent",
+            normal.metrics.peak_active_children,
+            rlm.metrics.peak_active_children,
+        ),
+        _row(
             "Children ok",
             normal.metrics.successful_children,
             rlm.metrics.successful_children,
@@ -127,6 +137,7 @@ def render_aggregate(results: list[BenchmarkResult]) -> str:
         _row("Avg tool calls", normal["average_tool_calls"], rlm["average_tool_calls"]),
         _row("Avg attempts", normal["average_attempts"], rlm["average_attempts"]),
         _row("Avg children", normal["average_children"], rlm["average_children"]),
+        _row("Peak concurrent", normal["peak_active_children"], rlm["peak_active_children"]),
         _row("Avg findings", normal["average_findings"], rlm["average_findings"]),
         _row("Partial rate", normal["partial_rate"], rlm["partial_rate"]),
         _row("Failures", normal["failures"], rlm["failures"]),

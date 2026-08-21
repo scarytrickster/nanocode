@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from agent.evaluator import EvaluationResult
 from agent.state import AgentState
 from agent.tracer import Tracer
+from langfuse import get_client
 
 
 @dataclass
@@ -27,6 +28,33 @@ class Reflector:
     ) -> ReflectionResult:
         """Reflect on the execution result."""
 
+        langfuse = get_client()
+
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="reflection",
+            input={
+                "success": evaluation.success,
+                "reason": evaluation.reason,
+            },
+        ) as obs:
+            result = self._reflect(state, evaluation)
+
+            obs.update(
+                output={
+                    "should_improve": result.should_improve,
+                    "diagnosis": result.diagnosis,
+                    "improvement": result.improvement,
+                }
+            )
+
+        return result
+
+    def _reflect(
+        self,
+        state: AgentState,
+        evaluation: EvaluationResult,
+    ) -> ReflectionResult:
         # -------------------------------------------------
         # Successful execution
         # -------------------------------------------------

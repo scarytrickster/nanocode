@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -94,6 +95,12 @@ class NanoCodeCallHandler(RLMCallHandler):
         self.child_count: int = 0
         self.children_started: int = 0
 
+        # Children may run concurrently, so identity cannot come from the
+        # order threads happen to arrive: the runtime announces the
+        # decomposition order up front and each child looks itself up.
+        self._child_order: dict[str, int] = {}
+        self._counter_lock = threading.Lock()
+
     def set_event_forwarding(
         self,
         tracer: Any | None,
@@ -103,7 +110,41 @@ class NanoCodeCallHandler(RLMCallHandler):
 
         self.event_tracer = tracer
         self.child_count = child_count
-        self.children_started = 0
+
+        with self._counter_lock:
+            self.children_started = 0
+
+    def set_child_order(self, tasks: list[str]) -> None:
+        """Fix each child's number from the decomposition order."""
+
+        self._child_order = {
+            task: index
+            for index, task in enumerate(tasks, start=1)
+        }
+
+        if not self.child_count:
+            self.child_count = len(tasks)
+
+        with self._counter_lock:
+            self.children_started = 0
+
+    def _child_index(self, context: RLMContext) -> int:
+        """This child's number, stable regardless of when it runs."""
+
+        index = self._child_order.get(context.task)
+
+        if index is not None:
+            with self._counter_lock:
+                self.children_started += 1
+
+            return index
+
+        # No announced order (a direct runtime.call): fall back to arrival
+        # order, counted atomically.
+        with self._counter_lock:
+            self.children_started += 1
+
+            return self.children_started
 
     def _forward(
         self,
@@ -176,9 +217,7 @@ class NanoCodeCallHandler(RLMCallHandler):
     def call(self, context: RLMContext) -> RLMResult:
         """Execute a child task using NanoCodeAgent."""
 
-        self.children_started += 1
-
-        child_index = self.children_started
+        child_index = self._child_index(context)
 
         agent = self.agent_factory()
 

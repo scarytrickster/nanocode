@@ -58,6 +58,9 @@ class ExecutionMetrics:
 
     failures: list[str] = field(default_factory=list)
 
+    max_concurrency: int = 1
+    peak_active_children: int = 0
+
     duration_seconds: float = 0.0
     tokens: str = TOKENS_UNAVAILABLE
 
@@ -80,6 +83,8 @@ class ExecutionMetrics:
             "successful_children": self.successful_children,
             "failed_children": self.failed_children,
             "child_retries": self.child_retries,
+            "max_concurrency": self.max_concurrency,
+            "peak_active_children": self.peak_active_children,
             "failures": list(self.failures),
             "duration_seconds": self.duration_seconds,
             "tokens": self.tokens,

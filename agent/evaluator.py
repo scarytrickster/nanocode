@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from agent.state import AgentState, AgentStatus
 from agent.tracer import Tracer
+from langfuse import get_client
 
 
 @dataclass
@@ -22,6 +23,29 @@ class Evaluator:
     def evaluate(self, state: AgentState) -> EvaluationResult:
         """Evaluate the final state of an agent run."""
 
+        langfuse = get_client()
+
+        with langfuse.start_as_current_observation(
+            as_type="span",
+            name="evaluator",
+            input={
+                "status": state.status,
+                "final_response": state.final_response,
+            },
+        ) as obs:
+            result = self._evaluate(state)
+
+            obs.update(
+                output={
+                    "success": result.success,
+                    "score": result.score,
+                    "reason": result.reason,
+                }
+            )
+
+        return result
+
+    def _evaluate(self, state: AgentState) -> EvaluationResult:
         # -------------------------------------------------
         # Completed execution
         # -------------------------------------------------
