@@ -418,7 +418,10 @@ def test_a_complete_run_carries_no_partial_notice():
     assert metadata[RATE_LIMITED_KEY] == 0
 
     assert "Partial investigation" not in answer
-    assert answer == orchestrator.last_result.answer
+
+    # A complete run returns the evidence report with no completeness notice.
+    assert answer == orchestrator.last_result.metadata["report"]
+    assert orchestrator.last_result.answer
 
 
 # ---------------------------------------------------------------------------

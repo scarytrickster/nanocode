@@ -15,9 +15,15 @@ from rlm.nanocode_handler import NanoCodeCallHandler, create_nanocode_agent
 from rlm.result import RLMResult
 from rlm.runtime import RLMRuntime
 from rlm.synthesizer import (
+    CONFIDENCE_KEY,
+    CONFIRMED_COUNT_KEY,
+    CONFLICTING_COUNT_KEY,
     FAILED_KEY,
+    FINDINGS_COUNT_KEY,
     PARTIAL_KEY,
+    PRIMARY_KEY,
     RATE_LIMITED_KEY,
+    REPORT_KEY,
     RLMSynthesizer,
     SUCCESSFUL_KEY,
 )
@@ -185,6 +191,11 @@ class RLMOrchestrator:
             failed_children=metadata.get(FAILED_KEY, 0),
             rate_limited_children=metadata.get(RATE_LIMITED_KEY, 0),
             partial=bool(metadata.get(PARTIAL_KEY)),
+            findings_count=metadata.get(FINDINGS_COUNT_KEY, 0),
+            confirmed_findings=metadata.get(CONFIRMED_COUNT_KEY, 0),
+            conflicting_findings=metadata.get(CONFLICTING_COUNT_KEY, 0),
+            primary_finding_present=bool(metadata.get(PRIMARY_KEY)),
+            confidence=metadata.get(CONFIDENCE_KEY, "low"),
         )
 
         return self._to_answer(result, task)
@@ -203,7 +214,11 @@ class RLMOrchestrator:
         if result.answer:
             notice = self._completeness_notice(result)
 
-            return f"{notice}{result.answer}" if notice else str(result.answer)
+            # The evidence report is the coherent form of the same content;
+            # result.answer keeps the raw joined child answers.
+            body = (result.metadata or {}).get(REPORT_KEY) or str(result.answer)
+
+            return f"{notice}{body}" if notice else body
 
         if result.success:
             return ""

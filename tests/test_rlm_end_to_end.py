@@ -628,9 +628,16 @@ def test_synthesis_combines_the_deterministic_child_results():
 
     assert [result.answer for result in batch] == CHILD_ANSWERS
 
-    # The existing synthesizer joins successful answers; no second synthesis
-    # implementation is involved.
-    assert answer == "\n\n".join(CHILD_ANSWERS)
+    # The existing synthesizer joins successful answers into RLMResult.answer;
+    # no second synthesis implementation is involved.
+    assert orchestrator.last_result.answer == "\n\n".join(CHILD_ANSWERS)
+
+    # The caller receives the evidence report built from those same answers
+    # (Phase 8), and every child finding survives into it.
+    assert answer == orchestrator.last_result.metadata["report"]
+
+    for child_answer in CHILD_ANSWERS:
+        assert child_answer in answer
 
     assert orchestrator.last_result.success is True
     assert orchestrator.last_result.children_created == len(CHILD_ANSWERS)
@@ -656,9 +663,11 @@ def test_final_result_uses_the_existing_result_contract():
     assert result.children_created == len(orchestrator.last_child_tasks)
     assert isinstance(result.metadata, dict)
 
-    # NanoCode callers receive a plain string.
+    # NanoCode callers receive a plain string: the evidence report, which is
+    # derived from result.answer rather than replacing it.
     assert isinstance(answer, str)
-    assert answer == result.answer
+    assert answer == result.metadata["report"]
+    assert result.answer
 
 
 # ---------------------------------------------------------------------------
