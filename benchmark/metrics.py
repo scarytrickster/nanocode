@@ -30,6 +30,8 @@ DECOMPOSITION_STARTED = "rlm.decomposition.started"
 DECOMPOSITION_SUCCEEDED = "rlm.decomposition.succeeded"
 DECOMPOSITION_FALLBACK = "rlm.decomposition.fallback"
 
+CONTEXT_COMPRESSED = "context.compressed"
+
 RETRY_STARTED = "retry.started"
 RETRY_EXHAUSTED = "retry.exhausted"
 RSI_STARTED = "rsi.started"
@@ -65,6 +67,11 @@ class ExecutionMetrics:
     max_concurrency: int = 1
     peak_active_children: int = 0
 
+    context_compressions: int = 0
+    context_original_tokens: int = 0
+    context_final_tokens: int = 0
+    peak_context_tokens: int = 0
+
     decomposition_strategy: str = ""
     decomposition_llm_calls: int = 0
     decomposition_fallback: bool = False
@@ -76,6 +83,17 @@ class ExecutionMetrics:
     @property
     def failure_count(self) -> int:
         return len(self.failures)
+
+    @property
+    def context_compression_ratio(self) -> float:
+        """Final size as a fraction of the original. 1.0 when uncompressed."""
+
+        if not self.context_original_tokens:
+            return 1.0
+
+        return round(
+            self.context_final_tokens / self.context_original_tokens, 4
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -94,6 +112,11 @@ class ExecutionMetrics:
             "child_retries": self.child_retries,
             "max_concurrency": self.max_concurrency,
             "peak_active_children": self.peak_active_children,
+            "context_compressions": self.context_compressions,
+            "context_original_tokens": self.context_original_tokens,
+            "context_final_tokens": self.context_final_tokens,
+            "peak_context_tokens": self.peak_context_tokens,
+            "context_compression_ratio": self.context_compression_ratio,
             "decomposition_strategy": self.decomposition_strategy,
             "decomposition_llm_calls": self.decomposition_llm_calls,
             "decomposition_fallback": self.decomposition_fallback,
@@ -148,6 +171,20 @@ def collect_metrics(events, duration_seconds: float = 0.0) -> ExecutionMetrics:
 
         elif name == CHILD_RETRYING:
             metrics.child_retries += 1
+
+        elif name == CONTEXT_COMPRESSED:
+            metrics.context_compressions += 1
+
+            original = int(event.data.get("original_estimated_tokens", 0))
+            final = int(event.data.get("final_estimated_tokens", 0))
+
+            # Totals across every compressed request, plus the largest single
+            # context the run ever assembled.
+            metrics.context_original_tokens += original
+            metrics.context_final_tokens += final
+            metrics.peak_context_tokens = max(
+                metrics.peak_context_tokens, original
+            )
 
         elif name == DECOMPOSITION_STARTED:
             metrics.decomposition_strategy = str(

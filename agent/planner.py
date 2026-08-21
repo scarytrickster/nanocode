@@ -20,6 +20,7 @@ from pyexpat.errors import messages
 
 from agent import tracer
 from agent import state
+from agent.context_budget import ContextBudgetManager
 from config.settings import MODEL, client
 from agent.state import AgentState
 from agent.tracer import Tracer
@@ -61,9 +62,19 @@ class Planner:
     Creates an execution plan for an AgentState.
     """
 
-    def __init__(self, tracer: Tracer | None = None):
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        context_manager: ContextBudgetManager | None = None,
+    ):
         self.client = client
         self.tracer = tracer or Tracer()
+
+        # The same centralized manager the executor uses: the compression
+        # algorithm lives in one place, not in each caller.
+        self.context_manager = context_manager or ContextBudgetManager(
+            tracer=self.tracer
+        )
 
     def run(
         self,
@@ -81,16 +92,20 @@ class Planner:
             retry_context,
         )
 
-        messages = [
-            {
-                "role": "system",
-                "content": PLANNER_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": user_content,
-            },
-        ]
+        # Small in the normal case, but memory experiences and RSI retry
+        # context both feed this prompt, so it goes through the same budget.
+        messages = self.context_manager.prepare(
+            [
+                {
+                    "role": "system",
+                    "content": PLANNER_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": user_content,
+                },
+            ]
+        )
 
         langfuse = get_client()
 

@@ -106,6 +106,20 @@ class TerminalRenderer:
         elif event.name == "executor.completed":
             self.print_success("Execution complete")
 
+        elif event.name == "context.compressed":
+            before = event.data.get("original_estimated_tokens", 0)
+            after = event.data.get("final_estimated_tokens", 0)
+
+            print(
+                f"  ↳ {self._prefix}context compressed: "
+                f"{self._tokens(before)} -> {self._tokens(after)} tokens"
+            )
+
+        elif event.name == "context.budget.exceeded":
+            self.print_error(
+                "context budget exceeded; oldest context was dropped"
+            )
+
         elif event.name == "tool.started":
             tool = event.data.get("tool", "tool")
             self.print_tool_started(tool)
@@ -142,6 +156,17 @@ class TerminalRenderer:
             self.print_error(
                 f"{event.component} failed"
             )
+
+    @staticmethod
+    def _tokens(value) -> str:
+        """Compact token count: 82000 -> 82k."""
+
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            return "?"
+
+        return f"{count // 1000}k" if count >= 1000 else str(count)
 
     def print_tool_started(self, tool: str) -> None:
         print(f"  ↳ {self._prefix}{tool}")

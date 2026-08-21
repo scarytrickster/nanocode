@@ -96,6 +96,16 @@ def render_result(result: BenchmarkResult) -> str:
             normal.metrics.failure_count,
             rlm.metrics.failure_count,
         ),
+        _row(
+            "Context compressions",
+            normal.metrics.context_compressions,
+            rlm.metrics.context_compressions,
+        ),
+        _row(
+            "Peak context (tok)",
+            normal.metrics.peak_context_tokens,
+            rlm.metrics.peak_context_tokens,
+        ),
         _row("Tokens", normal.metrics.tokens, ""),
     ]
 

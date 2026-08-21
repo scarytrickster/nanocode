@@ -13,6 +13,33 @@ API_KEY = os.getenv("OPENROUTER_API_KEY")
 FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
 MAX_WEB_CONTENT_LENGTH = 5000
 
+# ---------------------------------------------------------------------------
+# Context budget.
+#
+# The provider's documented window for the configured model. Recorded here as
+# the reason for the default budget; nothing else reads it directly.
+MODEL_CONTEXT_LIMIT = 262_144
+
+# Headroom left for everything the budget does not measure: the model's own
+# response, tool schemas, provider-side overhead, and the retry context a
+# failed attempt adds. A run that fills the whole window has already failed.
+CONTEXT_SAFETY_MARGIN = 0.35
+
+# What a request is actually allowed to spend, in estimated tokens.
+CONTEXT_TOKEN_BUDGET = int(MODEL_CONTEXT_LIMIT * (1 - CONTEXT_SAFETY_MARGIN))
+
+# Estimation constant: roughly four characters per token for English prose and
+# source code. This is an estimate, never an exact count -- no tokenizer is
+# available here.
+CHARS_PER_TOKEN = 4
+
+# Recent messages that are never compressed: the model is actively working
+# from the latest exchange.
+MIN_RECENT_MESSAGES = 6
+
+# What one compressed entry is shortened to.
+MAX_COMPRESSED_ENTRY_CHARS = 800
+
 # The OpenAI client refuses to construct without a key, which would make
 # importing any agent module impossible offline; the deterministic test suites
 # import agent modules without credentials. A placeholder keeps import working.

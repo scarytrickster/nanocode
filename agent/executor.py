@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent.context_budget import ContextBudgetManager
 from config.settings import MODEL, client
 from models.config import ToolCall
 from agent.state import AgentState, AgentStatus, ensure_system_message
@@ -30,9 +31,20 @@ class Executor:
     Executes one complete agent task.
     """
 
-    def __init__(self, tracer: Tracer | None = None):
+    def __init__(
+        self,
+        tracer: Tracer | None = None,
+        context_manager: ContextBudgetManager | None = None,
+    ):
         self.client = client
         self.tracer = tracer or Tracer()
+
+        # The executor is where context accumulates: every iteration appends an
+        # assistant message and its tool results. Each result is already capped
+        # at 20k characters (Phase 6.6); this bounds their sum.
+        self.context_manager = context_manager or ContextBudgetManager(
+            tracer=self.tracer
+        )
 
     # ---------------------------------------------------------
     # Public API
@@ -71,7 +83,9 @@ class Executor:
             while state.iteration < state.config.max_iterations:
                 state.iteration += 1
 
-                execution_messages = self._build_messages(state)
+                execution_messages = self.context_manager.prepare(
+                    self._build_messages(state)
+                )
 
                 with self.tracer.span(
                     "llm",
