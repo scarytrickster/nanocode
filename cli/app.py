@@ -1,5 +1,5 @@
 from agent.agent import NanoCodeAgent
-from config.settings import MODEL
+from config.settings import MODEL, require_api_key
 
 from cli.banner import BannerInfo, render_banner
 from cli.commands import CommandContext, CommandHandler
@@ -135,6 +135,8 @@ class NanoCodeCLI:
 
 
 def main() -> None:
+    require_api_key()
+
     cli = NanoCodeCLI()
     cli.run()
 

@@ -3,6 +3,7 @@ import sys
 from langfuse import get_client
 
 from agent.agent import NanoCodeAgent
+from config.settings import require_api_key
 from models.config import AgentConfig
 
 
@@ -11,6 +12,8 @@ def main():
         print("Usage:")
         print('  python cli.py "your task here"')
         return
+
+    require_api_key()
 
     task = " ".join(sys.argv[1:])
 
