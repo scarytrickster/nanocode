@@ -25,6 +25,7 @@ from agent.memory import Experience, Memory
 from collections.abc import Callable
 from langfuse import get_client
 
+from agent.rsi import RSIContext
 from rlm.router import STRATEGY_RLM, RLMRouter, RouteDecision
 
 
@@ -111,6 +112,10 @@ class NanoCodeAgent:
         self.rlm_orchestrator = rlm_orchestrator
 
         self.last_route_decision: RouteDecision | None = None
+
+        # The RSI context of the most recent attempt, so a caller can inspect
+        # what the final attempt actually learned from the ones before it.
+        self.last_rsi_context: RSIContext | None = None
     
         # A supplied history is normalized, never trusted, so NanoCode's own
         # system instruction always leads the conversation.
@@ -227,10 +232,25 @@ class NanoCodeAgent:
                     matches=len(experiences),
                 )
 
-                retry_context: dict[str, str] | None = None
+                rsi = RSIContext()
                 last_reflection = None
+                rsi_started = False
+
+                self.last_rsi_context = rsi
 
                 while True:
+
+                    # The planner context for a retry is derived from the
+                    # previous attempt's evaluation and reflection: attempt
+                    # N+1 never replays attempt N's input unchanged.
+                    retry_context = rsi.to_planner_context()
+
+                    if rsi.is_retry:
+                        self.tracer.record(
+                            "rsi.retry.started",
+                            component="rsi",
+                            **rsi.summary(),
+                        )
 
                     self.planner.run(
                         state,
@@ -274,7 +294,33 @@ class NanoCodeAgent:
                                 status="success",
                             )
 
+                            self.tracer.record(
+                                "rsi.completed",
+                                component="rsi",
+                                success=True,
+                                **rsi.summary(),
+                            )
+
                         break
+
+                    # The next attempt's context, derived from this attempt's
+                    # failure. Built before the limit checks so the reason a
+                    # run stopped improving is always inspectable.
+                    improved = rsi.next_attempt(
+                        evaluation=evaluation,
+                        reflection=reflection,
+                        response=state.final_response,
+                    )
+
+                    self.tracer.record(
+                        "rsi.reflection.completed",
+                        component="rsi",
+                        attempt=rsi.attempt,
+                        has_improvement=improved.has_improvement,
+                        should_improve=bool(
+                            getattr(reflection, "should_improve", False)
+                        ),
+                    )
 
                     if state.retry_count >= state.config.max_retries:
                         self.tracer.record(
@@ -282,17 +328,36 @@ class NanoCodeAgent:
                             component="agent",
                             attempts=state.retry_count,
                         )
+
+                        self.tracer.record(
+                            "rsi.exhausted",
+                            component="rsi",
+                            attempts=rsi.attempt,
+                            max_retries=state.config.max_retries,
+                        )
                         break
 
                     if not reflection.should_improve:
                         break
 
-                    retry_context = {
-                        "diagnosis": reflection.diagnosis,
-                        "improvement": reflection.improvement,
-                    }
+                    if not rsi_started:
+                        rsi_started = True
 
+                        self.tracer.record(
+                            "rsi.started",
+                            component="rsi",
+                            attempt=rsi.attempt,
+                            reason="evaluation_failed",
+                            has_improvement=improved.has_improvement,
+                        )
+
+                    # RSI shares the existing retry budget; it never keeps a
+                    # counter of its own.
                     state.retry_count += 1
+
+                    rsi = improved
+
+                    self.last_rsi_context = rsi
 
                     self.tracer.record(
                         "retry.started",
